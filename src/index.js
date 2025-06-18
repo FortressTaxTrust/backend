@@ -5,6 +5,7 @@ import { healthRouter } from './routes/health.js';
 import { protectedRouter } from './routes/protected.js';
 import { testRouter } from './routes/test.js';
 import authRouter from './routes/auth.js';
+import zohoRouter from './routes/zoho.js';
 
 // Load environment variables
 dotenv.config();
@@ -60,6 +61,13 @@ app.get('/', (req, res) => {
         login: '/auth/login',
         signup: '/auth/signup',
         confirmSignup: '/auth/confirm-signup'
+      },
+      zoho: {
+        testConnection: '/zoho/test-connection',
+        crmModules: '/zoho/crm/modules',
+        workdriveFolders: '/zoho/workdrive/folders',
+        crmRecords: '/zoho/crm/{module}',
+        refreshToken: '/zoho/refresh-token'
       }
     }
   });
@@ -70,6 +78,7 @@ app.use('/health', healthRouter);
 app.use('/api', protectedRouter);
 app.use('/test', testRouter);
 app.use('/auth', authRouter);
+app.use('/zoho', zohoRouter);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
