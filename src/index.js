@@ -67,6 +67,10 @@ app.get('/', (req, res) => {
         crmModules: '/zoho/crm/modules',
         workdriveFolders: '/zoho/workdrive/folders',
         crmRecords: '/zoho/crm/{module}',
+        allContacts: '/zoho/crm/contacts/all',
+        myContact: '/zoho/crm/my-contact (Protected - requires JWT token)',
+        searchContactByEmail: '/zoho/crm/contacts/search/email/{email}',
+        searchContactByEmailContains: '/zoho/crm/contacts/search/email-contains/{emailPart}',
         refreshToken: '/zoho/refresh-token'
       }
     }
