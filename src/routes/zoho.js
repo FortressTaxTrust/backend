@@ -435,6 +435,526 @@ router.get('/crm/my-contact', authenticateToken, async (req, res) => {
       }
     });
   }
-  });
+});
+
+// Helper function to extract folder ID from Workdrive link
+const extractFolderIdFromLink = (workdriveLink) => {
+  if (!workdriveLink) return null;
+  
+  // Handle different formats:
+  // 1. Full URL: https://workdrive.zoho.com/folder/xyz123
+  // 2. Just folder ID: xyz123
+  // 3. API URL format: /api/v1/files/xyz123
+  
+  if (typeof workdriveLink === 'string') {
+    // Extract from URL patterns
+    const urlMatch = workdriveLink.match(/\/folder\/([^\/\?]+)/);
+    if (urlMatch) return urlMatch[1];
+    
+    const apiMatch = workdriveLink.match(/\/files\/([^\/\?]+)/);
+    if (apiMatch) return apiMatch[1];
+    
+    // If it's just an ID (alphanumeric), return as is
+    if (/^[a-zA-Z0-9_-]+$/.test(workdriveLink)) {
+      return workdriveLink;
+    }
+  }
+  
+  return null;
+};
+
+// Helper function to get user's contact and extract Workdrive folder ID
+const getUserWorkdriveFolderId = async (cognitoUserId) => {
+  try {
+    const searchUrl = `${ZOHO_CONFIG.baseUrlCRM}/Contacts/search?criteria=(Cognito_User_ID:equals:${encodeURIComponent(cognitoUserId)})`;
+    const response = await makeZohoAPICall(searchUrl);
+    
+    if (!response.data || response.data.length === 0) {
+      throw new Error('Contact not found for user');
+    }
+    
+    const userContact = response.data[0];
+    const workdriveLink = userContact.WorkDrive_Link;
+    const folderId = extractFolderIdFromLink(workdriveLink);
+    
+    if (!folderId) {
+      throw new Error('No Workdrive folder linked to this contact');
+    }
+    
+    return { folderId, contactData: userContact };
+  } catch (error) {
+    throw error;
+  }
+};
+
+// Protected route: Get user's Workdrive files
+router.get('/workdrive/my-files', authenticateToken, async (req, res) => {
+  try {
+    const cognitoUserId = req.user.sub;
+    
+    if (!cognitoUserId) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'User ID not found in token'
+      });
+    }
+
+    // Get user's Workdrive folder ID from their CRM contact
+    const { folderId, contactData } = await getUserWorkdriveFolderId(cognitoUserId);
+    
+    console.log(`Fetching files from Workdrive folder: ${folderId} for user: ${contactData.Full_Name}`);
+
+    // Get files from Workdrive folder
+    const filesUrl = `${ZOHO_CONFIG.baseUrlWorkdrive}/files/${folderId}/files`;
+    const filesResponse = await makeZohoAPICall(filesUrl);
+    
+    res.json({
+      status: 'success',
+      message: 'User files retrieved successfully',
+      userInfo: {
+        cognitoUserId: cognitoUserId,
+        contactName: contactData.Full_Name,
+        contactId: contactData.id
+      },
+      workdriveInfo: {
+        folderId: folderId,
+        folderLink: contactData.WorkDrive_Link
+      },
+      files: filesResponse.data || [],
+      totalFiles: filesResponse.data?.length || 0,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error fetching user files:', error.response?.data || error.message);
+    
+    if (error.message === 'Contact not found for user') {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Contact not found for this user',
+        suggestion: 'Please contact support to link your account with CRM data'
+      });
+    }
+    
+    if (error.message === 'No Workdrive folder linked to this contact') {
+      return res.status(404).json({
+        status: 'error',
+        message: 'No Workdrive folder linked to your contact',
+        suggestion: 'Please contact support to set up your document folder'
+      });
+    }
+    
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch user files',
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+// Protected route: Download specific file
+router.get('/workdrive/download/:fileId', authenticateToken, async (req, res) => {
+  try {
+    const cognitoUserId = req.user.sub;
+    const { fileId } = req.params;
+    
+    if (!cognitoUserId) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'User ID not found in token'
+      });
+    }
+
+    if (!fileId) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'File ID is required'
+      });
+    }
+
+    // Verify user has access to their Workdrive folder
+    const { folderId, contactData } = await getUserWorkdriveFolderId(cognitoUserId);
+    
+    console.log(`Downloading file: ${fileId} for user: ${contactData.Full_Name}`);
+
+    // Get file download URL from Workdrive
+    const downloadUrl = `${ZOHO_CONFIG.baseUrlWorkdrive}/files/${fileId}/download`;
+    const downloadResponse = await makeZohoAPICall(downloadUrl);
+    
+    // If Zoho returns a direct download URL, redirect to it
+    if (downloadResponse.download_url) {
+      return res.redirect(downloadResponse.download_url);
+    }
+    
+    // Otherwise return the download data
+    res.json({
+      status: 'success',
+      message: 'File download link retrieved',
+      fileId: fileId,
+      downloadData: downloadResponse,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error downloading file:', error.response?.data || error.message);
+    
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to download file',
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+// Protected route: Upload file to user's Workdrive folder
+router.post('/workdrive/upload', authenticateToken, async (req, res) => {
+  try {
+    const cognitoUserId = req.user.sub;
+    
+    if (!cognitoUserId) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'User ID not found in token'
+      });
+    }
+
+    // Get user's Workdrive folder ID from their CRM contact
+    const { folderId, contactData } = await getUserWorkdriveFolderId(cognitoUserId);
+    
+    console.log(`Uploading file to Workdrive folder: ${folderId} for user: ${contactData.Full_Name}`);
+
+    // Note: File upload typically requires multipart/form-data
+    // This is a basic implementation - you may need to handle file uploads differently
+    const uploadUrl = `${ZOHO_CONFIG.baseUrlWorkdrive}/upload`;
+    
+    // Prepare upload data (this will need to be adjusted based on actual file upload requirements)
+    const uploadData = {
+      parent_id: folderId,
+      filename: req.body.filename || 'uploaded_file',
+      override_name_exist: true
+    };
+    
+    // For now, return the upload URL and parameters for client-side implementation
+    res.json({
+      status: 'success',
+      message: 'Upload endpoint ready',
+      userInfo: {
+        cognitoUserId: cognitoUserId,
+        contactName: contactData.Full_Name
+      },
+      uploadInfo: {
+        folderId: folderId,
+        uploadUrl: uploadUrl,
+        uploadData: uploadData
+      },
+      instructions: 'Use multipart/form-data to upload files to the provided URL with the folder ID',
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error setting up file upload:', error.response?.data || error.message);
+    
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to set up file upload',
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+// Protected route: Create subfolder in user's Workdrive
+router.post('/workdrive/create-folder', authenticateToken, async (req, res) => {
+  try {
+    const cognitoUserId = req.user.sub;
+    const { folderName } = req.body;
+    
+    if (!cognitoUserId) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'User ID not found in token'
+      });
+    }
+
+    if (!folderName) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Folder name is required'
+      });
+    }
+
+    // Get user's Workdrive folder ID from their CRM contact
+    const { folderId, contactData } = await getUserWorkdriveFolderId(cognitoUserId);
+    
+    console.log(`Creating subfolder "${folderName}" in Workdrive folder: ${folderId} for user: ${contactData.Full_Name}`);
+
+    // Create subfolder in Workdrive
+    const createFolderUrl = `${ZOHO_CONFIG.baseUrlWorkdrive}/files/${folderId}/folder`;
+    const folderData = {
+      name: folderName
+    };
+    
+    const createResponse = await makeZohoAPICall(createFolderUrl, 'POST', folderData);
+    
+    res.json({
+      status: 'success',
+      message: 'Subfolder created successfully',
+      userInfo: {
+        cognitoUserId: cognitoUserId,
+        contactName: contactData.Full_Name
+      },
+      folderInfo: {
+        parentFolderId: folderId,
+        newFolderName: folderName,
+        createdFolder: createResponse.data
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error creating subfolder:', error.response?.data || error.message);
+    
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to create subfolder',
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+
+
+// Protected route: Get user's Workdrive files
+router.get('/workdrive/my-files', authenticateToken, async (req, res) => {
+  try {
+    const cognitoUserId = req.user.sub;
+    
+    if (!cognitoUserId) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'User ID not found in token'
+      });
+    }
+
+    // Get user's Workdrive folder ID from their CRM contact
+    const { folderId, contactData } = await getUserWorkdriveFolderId(cognitoUserId);
+    
+    console.log(`Fetching files from Workdrive folder: ${folderId} for user: ${contactData.Full_Name}`);
+
+    // Get files from Workdrive folder
+    const filesUrl = `${ZOHO_CONFIG.baseUrlWorkdrive}/files/${folderId}/files`;
+    const filesResponse = await makeZohoAPICall(filesUrl);
+    
+    res.json({
+      status: 'success',
+      message: 'User files retrieved successfully',
+      userInfo: {
+        cognitoUserId: cognitoUserId,
+        contactName: contactData.Full_Name,
+        contactId: contactData.id
+      },
+      workdriveInfo: {
+        folderId: folderId,
+        folderLink: contactData.WorkDrive_Link
+      },
+      files: filesResponse.data || [],
+      totalFiles: filesResponse.data?.length || 0,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error fetching user files:', error.response?.data || error.message);
+    
+    if (error.message === 'Contact not found for user') {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Contact not found for this user',
+        suggestion: 'Please contact support to link your account with CRM data'
+      });
+    }
+    
+    if (error.message === 'No Workdrive folder linked to this contact') {
+      return res.status(404).json({
+        status: 'error',
+        message: 'No Workdrive folder linked to your contact',
+        suggestion: 'Please contact support to set up your document folder'
+      });
+    }
+    
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch user files',
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+// Protected route: Download specific file
+router.get('/workdrive/download/:fileId', authenticateToken, async (req, res) => {
+  try {
+    const cognitoUserId = req.user.sub;
+    const { fileId } = req.params;
+    
+    if (!cognitoUserId) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'User ID not found in token'
+      });
+    }
+
+    if (!fileId) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'File ID is required'
+      });
+    }
+
+    // Verify user has access to their Workdrive folder
+    const { folderId, contactData } = await getUserWorkdriveFolderId(cognitoUserId);
+    
+    console.log(`Downloading file: ${fileId} for user: ${contactData.Full_Name}`);
+
+    // Get file download URL from Workdrive
+    const downloadUrl = `${ZOHO_CONFIG.baseUrlWorkdrive}/files/${fileId}/download`;
+    const downloadResponse = await makeZohoAPICall(downloadUrl);
+    
+    // If Zoho returns a direct download URL, redirect to it
+    if (downloadResponse.download_url) {
+      return res.redirect(downloadResponse.download_url);
+    }
+    
+    // Otherwise return the download data
+    res.json({
+      status: 'success',
+      message: 'File download link retrieved',
+      fileId: fileId,
+      downloadData: downloadResponse,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error downloading file:', error.response?.data || error.message);
+    
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to download file',
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+// Protected route: Upload file to user's Workdrive folder
+router.post('/workdrive/upload', authenticateToken, async (req, res) => {
+  try {
+    const cognitoUserId = req.user.sub;
+    
+    if (!cognitoUserId) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'User ID not found in token'
+      });
+    }
+
+    // Get user's Workdrive folder ID from their CRM contact
+    const { folderId, contactData } = await getUserWorkdriveFolderId(cognitoUserId);
+    
+    console.log(`Uploading file to Workdrive folder: ${folderId} for user: ${contactData.Full_Name}`);
+
+    // Note: File upload typically requires multipart/form-data
+    // This is a basic implementation - you may need to handle file uploads differently
+    const uploadUrl = `${ZOHO_CONFIG.baseUrlWorkdrive}/upload`;
+    
+    // Prepare upload data (this will need to be adjusted based on actual file upload requirements)
+    const uploadData = {
+      parent_id: folderId,
+      filename: req.body.filename || 'uploaded_file',
+      override_name_exist: true
+    };
+    
+    // For now, return the upload URL and parameters for client-side implementation
+    res.json({
+      status: 'success',
+      message: 'Upload endpoint ready',
+      userInfo: {
+        cognitoUserId: cognitoUserId,
+        contactName: contactData.Full_Name
+      },
+      uploadInfo: {
+        folderId: folderId,
+        uploadUrl: uploadUrl,
+        uploadData: uploadData
+      },
+      instructions: 'Use multipart/form-data to upload files to the provided URL with the folder ID',
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error setting up file upload:', error.response?.data || error.message);
+    
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to set up file upload',
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+// Protected route: Create subfolder in user's Workdrive
+router.post('/workdrive/create-folder', authenticateToken, async (req, res) => {
+  try {
+    const cognitoUserId = req.user.sub;
+    const { folderName } = req.body;
+    
+    if (!cognitoUserId) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'User ID not found in token'
+      });
+    }
+
+    if (!folderName) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Folder name is required'
+      });
+    }
+
+    // Get user's Workdrive folder ID from their CRM contact
+    const { folderId, contactData } = await getUserWorkdriveFolderId(cognitoUserId);
+    
+    console.log(`Creating subfolder "${folderName}" in Workdrive folder: ${folderId} for user: ${contactData.Full_Name}`);
+
+    // Create subfolder in Workdrive
+    const createFolderUrl = `${ZOHO_CONFIG.baseUrlWorkdrive}/files/${folderId}/folder`;
+    const folderData = {
+      name: folderName
+    };
+    
+    const createResponse = await makeZohoAPICall(createFolderUrl, 'POST', folderData);
+    
+    res.json({
+      status: 'success',
+      message: 'Subfolder created successfully',
+      userInfo: {
+        cognitoUserId: cognitoUserId,
+        contactName: contactData.Full_Name
+      },
+      folderInfo: {
+        parentFolderId: folderId,
+        newFolderName: folderName,
+        createdFolder: createResponse.data
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error creating subfolder:', error.response?.data || error.message);
+    
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to create subfolder',
+      error: error.response?.data || error.message
+    });
+  }
+});
 
 export default router;

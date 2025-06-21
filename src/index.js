@@ -6,6 +6,7 @@ import { protectedRouter } from './routes/protected.js';
 import { testRouter } from './routes/test.js';
 import authRouter from './routes/auth.js';
 import zohoRouter from './routes/zoho.js';
+import aiRouter from './routes/ai.js';
 
 // Load environment variables
 dotenv.config();
@@ -69,9 +70,18 @@ app.get('/', (req, res) => {
         crmRecords: '/zoho/crm/{module}',
         allContacts: '/zoho/crm/contacts/all',
         myContact: '/zoho/crm/my-contact (Protected - requires JWT token)',
+        myFiles: '/zoho/workdrive/my-files (Protected - user\'s Workdrive files)',
+        downloadFile: '/zoho/workdrive/download/{fileId} (Protected)',
+        uploadFile: '/zoho/workdrive/upload (Protected - POST)',
+        createFolder: '/zoho/workdrive/create-folder (Protected - POST)',
         searchContactByEmail: '/zoho/crm/contacts/search/email/{email}',
         searchContactByEmailContains: '/zoho/crm/contacts/search/email-contains/{emailPart}',
         refreshToken: '/zoho/refresh-token'
+      },
+      ai: {
+        testConnection: '/ai/test-connection',
+        analyzeFile: '/ai/analyze-file (Protected - POST)',
+        suggestFolders: '/ai/suggest-folders (Protected - POST)'
       }
     }
   });
@@ -83,6 +93,7 @@ app.use('/api', protectedRouter);
 app.use('/test', testRouter);
 app.use('/auth', authRouter);
 app.use('/zoho', zohoRouter);
+app.use('/ai', aiRouter);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
