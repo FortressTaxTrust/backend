@@ -70,12 +70,17 @@ app.get('/', (req, res) => {
         crmRecords: '/zoho/crm/{module}',
         allContacts: '/zoho/crm/contacts/all',
         myContact: '/zoho/crm/my-contact (Protected - requires JWT token)',
+        myContactCoql: '/zoho/crm/my-contact-coql (Protected - uses COQL Query API)',
+        myConnectedAccounts: '/zoho/crm/my-connected-accounts (Protected - Multi-Select-Lookup fields)',
         myFiles: '/zoho/workdrive/my-files (Protected - user\'s Workdrive files)',
         downloadFile: '/zoho/workdrive/download/{fileId} (Protected)',
         uploadFile: '/zoho/workdrive/upload (Protected - POST)',
         createFolder: '/zoho/workdrive/create-folder (Protected - POST)',
         searchContactByEmail: '/zoho/crm/contacts/search/email/{email}',
         searchContactByEmailContains: '/zoho/crm/contacts/search/email-contains/{emailPart}',
+        queryContacts: '/zoho/crm/query-contacts?email={email}&cognitoUserId={id} (Protected - COQL Query API)',
+        testConnectedAccounts: '/zoho/crm/test-connected-accounts (Protected - Test Multi-Select-Lookup fields)',
+        moduleMetadata: '/zoho/crm/module-metadata/{module} (Protected - Get module field metadata)',
         refreshToken: '/zoho/refresh-token'
       },
       ai: {

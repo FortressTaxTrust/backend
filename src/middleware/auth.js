@@ -5,10 +5,10 @@ import dotenv from 'dotenv';
 // Load environment variables
 dotenv.config();
 
-// Configuration
-const AWS_REGION = process.env.NEXT_PUBLIC_AWS_REGION;
-const USER_POOL_ID = process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID;
-const CLIENT_ID = process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID;
+// Configuration - hardcoded to avoid environment variable issues
+const AWS_REGION = 'us-east-1';
+const USER_POOL_ID = 'us-east-1_ad1psldfI';
+const CLIENT_ID = 'cabkj0egcqag1v4f9siu3j6gh';
 
 console.log('Auth Middleware Configuration:', {
   AWS_REGION,
