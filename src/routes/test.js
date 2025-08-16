@@ -83,7 +83,8 @@ const makeZohoAPICall = async (url, method = 'GET', data = null) => {
     const response = await axios(config);
     return response.data;
   } catch (error) {
-    if (error.response?.status === 401) {
+    console.log("error" , error)
+    if (error.response?.status === 500) {
       console.log('Access token expired, refreshing...');
       await refreshAccessToken();
       

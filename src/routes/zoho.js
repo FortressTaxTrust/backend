@@ -61,6 +61,10 @@ const refreshAccessToken = async () => {
 // Function to make authenticated API calls with automatic token refresh
 const makeZohoAPICall = async (url, method = 'GET', data = null, retryCount = 0, isWorkDrive = false) => {
   try {
+    if(!ZOHO_CONFIG.accessToken){
+      // ``
+
+    }
     const config = {
       method,
       url,
@@ -634,14 +638,27 @@ router.get('/workdrive/folder/:folderId/contents', async (req, res) => {
 
     
     // Use the correct WorkDrive API endpoint for folder contents
-    const url = `${ZOHO_CONFIG.baseUrlWorkdrive}/files?folder_id=${folderId}`;
+    const url = `${ZOHO_CONFIG.baseUrlWorkdrive}/files/${folderId}/files`;
+    const breadcrumb = `${ZOHO_CONFIG.baseUrlWorkdrive}/files/${folderId}/breadcrumbs`;
     const response = await makeZohoAPICall(url, 'GET', null, 0, true);
+    const breadcrumbResponse = await makeZohoAPICall(breadcrumb, 'GET', null, 0, true);
+    let breadcrumbData = [];
+    if(breadcrumbResponse.data && breadcrumbResponse.data.length > 0) {
+      console.log("breadcrumbResponse" , breadcrumbResponse);
+      breadcrumbData = breadcrumbResponse.data.map(item => ({
+        id: item.id,
+        attributes: item.attributes,
+        type: item.type,
+        links : item.type
+      }));
+    }
     res.json({
       status: 'success',
       folderId,
       files: response.data || [],
       rawResponse: response,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      breadcrumbData
     });
   } catch (error) {
     console.error('WorkDrive folder contents error:', error.response?.data || error.message);
