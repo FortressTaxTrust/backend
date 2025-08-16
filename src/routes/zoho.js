@@ -61,10 +61,6 @@ const refreshAccessToken = async () => {
 // Function to make authenticated API calls with automatic token refresh
 const makeZohoAPICall = async (url, method = 'GET', data = null, retryCount = 0, isWorkDrive = false) => {
   try {
-    if(!ZOHO_CONFIG.accessToken){
-      // ``
-
-    }
     const config = {
       method,
       url,
