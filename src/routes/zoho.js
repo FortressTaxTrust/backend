@@ -2,6 +2,7 @@ import express from 'express';
 import axios from 'axios';
 import dotenv from 'dotenv';
 import { authenticateToken } from '../middleware/auth.js';
+import FormData from 'form-data';
 
 // Load environment variables
 dotenv.config();
@@ -46,7 +47,7 @@ const refreshAccessToken = async () => {
     
     // Update the in-memory token
     ZOHO_CONFIG.accessToken = response.data.access_token;
-    
+    console.log("response.data.access_token ,", response.data.access_token)
     return response.data.access_token;
   } catch (error) {
     console.error('=== REFRESH TOKEN ERROR ===');
@@ -59,29 +60,28 @@ const refreshAccessToken = async () => {
 };
 
 // Function to make authenticated API calls with automatic token refresh
-const makeZohoAPICall = async (url, method = 'GET', data = null, retryCount = 0, isWorkDrive = false) => {
+const makeZohoAPICall = async (url, method = 'GET', data = null, retryCount = 0, isWorkDrive = false, headers = null, isUpload = false) => {
   try {
-    const config = {
-      method,
-      url,
-      headers: {
-        'Authorization': `Zoho-oauthtoken ${ZOHO_CONFIG.accessToken}`,
-        'Content-Type': 'application/json'
-      }
-    };
+      const config = { method, url, headers: {} };
 
-    // Add WorkDrive specific headers if needed
-    if (isWorkDrive) {
-      config.headers['Accept'] = 'application/vnd.api+json';
-    }
+          config.headers['Authorization'] = `Zoho-oauthtoken ${ZOHO_CONFIG.accessToken}`;
+         
+          if (isUpload && data instanceof FormData) {
+            config.headers = { ...config.headers, ...data.getHeaders() };
+            config.data = data;
+          } else {
+            config.headers['Content-Type'] = 'application/json';
+            if (isWorkDrive) {
+              config.headers['Accept'] = 'application/vnd.api+json';
+            }
+            if (headers) Object.assign(config.headers, headers);
+            if (data) config.data = data;
+          }
 
-    if (data) {
-      config.data = data;
-    }
+        const response = await axios(config);
+        return response.data;
 
-    const response = await axios(config);
-    return response.data;
-  } catch (error) {
+    } catch (error) {
     // If unauthorized and we haven't retried yet, refresh token and retry
     if (error.response?.status === 401 && retryCount === 0) {
       console.log('Access token expired, refreshing...');
@@ -89,11 +89,66 @@ const makeZohoAPICall = async (url, method = 'GET', data = null, retryCount = 0,
       ZOHO_CONFIG.accessToken = newToken;
       
       // Retry the request with new token
-      return makeZohoAPICall(url, method, data, 1, isWorkDrive);
+      return makeZohoAPICall(url, method, data, 1, isWorkDrive , headers, isUpload );
     }
-    
+
+    console.log('Error response data:', JSON.stringify(error.response?.data, null, 2));
     throw error;
   }
+};
+
+
+export async function getFolderByName(parentId, folderName) {
+  console.log("parent_id" , parentId)
+ const url = `${ZOHO_CONFIG.baseUrlWorkdrive}/files/${parentId}/files`;
+    const response = await makeZohoAPICall(url, 'GET', null, 0, true);
+    // console.log("res", response)
+  return response.data.find(folder => folder.attributes.name === folderName) || null;
+}
+
+// Create a folder under parent
+export async function createFolder(parentId, folderName) {
+  const data = {
+    data: {
+      type: "files",
+      attributes: {
+        name: folderName,
+        parent_id: parentId
+      }
+    }
+  };
+  try {
+    const response = await makeZohoAPICall( `${ZOHO_CONFIG.baseUrlWorkdrive}/files`,'POST',data,0,true);
+    return response.data;
+  } catch (err) {
+    console.error('Failed to create folder:', err.response?.data || err.message);
+    throw err;
+  }
+}
+
+// Upload file to folder
+export async function uploadFile(folderId, fileBuffer, filename, override = 'false') {
+
+  const formData = new FormData();
+  formData.append('content', fileBuffer, { filename });
+  formData.append('parent_id', folderId);
+  formData.append('override-name-exist', override);
+  formData.append('filename', encodeURIComponent(filename));
+  const headers = {
+      ...formData.getHeaders(), 
+  };
+  const url =  `${ZOHO_CONFIG.baseUrlWorkdrive}/upload`;
+  const res =  await makeZohoAPICall(url, 'POST', formData, 1, true , headers, true );
+  return res;
+}
+
+
+export async function getWorkDrive(accountIdString){
+    const coqlQuery = {
+      select_query: `select id, easyworkdriveforcrm__Workdrive_Folder_ID_EXT from Accounts where id in (${accountIdString})`
+    };
+  const response = await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlCRM}/coql`, 'POST', coqlQuery);
+  return response.data;
 };
 
 // === PROTECTED ROUTES (MUST COME BEFORE CATCH-ALL) ===

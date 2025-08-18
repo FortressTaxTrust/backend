@@ -1,71 +1,80 @@
-import express from 'express';
-import OpenAI from 'openai';
-import dotenv from 'dotenv';
-import { authenticateToken } from '../middleware/auth.js';
+import express from "express";
+import OpenAI from "openai";
+import dotenv from "dotenv";
+import { authenticateToken } from "../middleware/auth.js";
+import multer from "multer";
+import { getFolderByName,createFolder,uploadFile,getWorkDrive} from './zoho.js';
 
 // Load environment variables
 dotenv.config();
 
 const router = express.Router();
+// Configure multer for memory storage
+// Multer memory storage
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
 
 // Initialize OpenAI client
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
 // Test OpenAI API connection
-router.get('/test-connection', async (req, res) => {
+router.get("/test-connection", async (req, res) => {
   try {
-    console.log('Testing OpenAI API connection...');
-    
+    console.log("Testing OpenAI API connection...");
+
     // Simple test with a basic completion
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [
         {
           role: "user",
-          content: "Say 'Hello! OpenAI API is working correctly.' if you can receive this message."
-        }
+          content:
+            "Say 'Hello! OpenAI API is working correctly.' if you can receive this message.",
+        },
       ],
       max_tokens: 50,
-      temperature: 0.1
+      temperature: 0.1,
     });
 
-    const response = completion.choices[0]?.message?.content || 'No response received';
+    const response =
+      completion.choices[0]?.message?.content || "No response received";
 
     res.json({
-      status: 'success',
-      message: 'OpenAI API connection successful',
+      status: "success",
+      message: "OpenAI API connection successful",
       ai_response: response,
       usage: completion.usage,
       model: completion.model,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
-
   } catch (error) {
-    console.error('OpenAI API test failed:', error.message);
-    
+    console.error("OpenAI API test failed:", error.message);
+
     res.status(500).json({
-      status: 'error',
-      message: 'Failed to connect to OpenAI API',
+      status: "error",
+      message: "Failed to connect to OpenAI API",
       error: error.message,
       details: {
         hasApiKey: !!process.env.OPENAI_API_KEY,
-        apiKeyLength: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.length : 0
-      }
+        apiKeyLength: process.env.OPENAI_API_KEY
+          ? process.env.OPENAI_API_KEY.length
+          : 0,
+      },
     });
   }
 });
 
 // Test file analysis for folder organization
-router.post('/analyze-file', authenticateToken, async (req, res) => {
+router.post("/analyze-file", authenticateToken, async (req, res) => {
   try {
     const { filename, fileType, userContext } = req.body;
-    
+
     if (!filename) {
       return res.status(400).json({
-        status: 'error',
-        message: 'Filename is required'
+        status: "error",
+        message: "Filename is required",
       });
     }
 
@@ -76,10 +85,10 @@ router.post('/analyze-file', authenticateToken, async (req, res) => {
 
 File Details:
 - Filename: ${filename}
-- File Type: ${fileType || 'unknown'}
+- File Type: ${fileType || "unknown"}
 - User: ${req.user.given_name} ${req.user.family_name} (${req.user.email})
-- Upload Date: ${new Date().toISOString().split('T')[0]}
-${userContext ? `- Business Context: ${userContext}` : ''}
+- Upload Date: ${new Date().toISOString().split("T")[0]}
+${userContext ? `- Business Context: ${userContext}` : ""}
 
 Based on the filename and context, suggest a logical folder path structure. Consider:
 - Document type (tax forms, business documents, personal, contracts, etc.)
@@ -101,175 +110,288 @@ Respond with ONLY a JSON object in this exact format:
       messages: [
         {
           role: "system",
-          content: "You are a professional document organization assistant. Always respond with valid JSON only."
+          content:
+            "You are a professional document organization assistant. Always respond with valid JSON only.",
         },
         {
           role: "user",
-          content: prompt
-        }
+          content: prompt,
+        },
       ],
       max_tokens: 300,
-      temperature: 0.2
+      temperature: 0.2,
     });
 
-    const aiResponse = completion.choices[0]?.message?.content || '{}';
-    
+    const aiResponse = completion.choices[0]?.message?.content || "{}";
+
     try {
       // Parse the AI response as JSON
       const analysis = JSON.parse(aiResponse);
-      
+
       res.json({
-        status: 'success',
-        message: 'File analysis completed',
+        status: "success",
+        message: "File analysis completed",
         file_info: {
           filename: filename,
           fileType: fileType,
-          userEmail: req.user.email
+          userEmail: req.user.email,
         },
         ai_analysis: analysis,
         usage: completion.usage,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
-
     } catch (parseError) {
       // If JSON parsing fails, return the raw response
       res.json({
-        status: 'partial_success',
-        message: 'File analysis completed but response format needs adjustment',
+        status: "partial_success",
+        message: "File analysis completed but response format needs adjustment",
         file_info: {
           filename: filename,
           fileType: fileType,
-          userEmail: req.user.email
+          userEmail: req.user.email,
         },
         raw_ai_response: aiResponse,
         usage: completion.usage,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
     }
-
   } catch (error) {
-    console.error('File analysis failed:', error.message);
-    
+    console.error("File analysis failed:", error.message);
+
     res.status(500).json({
-      status: 'error',
-      message: 'Failed to analyze file',
-      error: error.message
+      status: "error",
+      message: "Failed to analyze file",
+      error: error.message,
     });
   }
 });
 
-router.post('/analyze-files', authenticateToken, async (req, res) => {
-  try {
-    const { files, userContext } = req.body;
+const allowedMimeTypes = [
+  // images
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/gif",
+  "image/webp",
+  // documents
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  // text
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/json",
+];
 
-    if (!files || !Array.isArray(files) || files.length === 0) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'At least one file is required'
-      });
-    }
+// function bufferToStream(buffer) {
+//   const stream = new Readable();
+//   stream.push(buffer);
+//   stream.push(null);
+//   return stream;
+// }
 
-    console.log(`Analyzing ${files.length} files for user: ${req.user.email}`);
-
-    // Build prompt with all files
-    const fileDetails = files.map((f, idx) => 
-    `File ${idx + 1}:
-    - Filename: ${f.filename}
-    - File Type: ${f.fileType || 'unknown'}`
-        ).join("\n\n");
-
-    const prompt = `You are a document organization expert. Analyze the following files and suggest the best folder structure for each file.
-
-    User: ${req.user.given_name} ${req.user.family_name} (${req.user.email})
-    Upload Date: ${new Date().toISOString().split('T')[0]}
-    ${userContext ? `Business Context: ${userContext}` : ''}
-
-    Files:
-    ${fileDetails}
-
-    For EACH file, respond with an entry inside a JSON array.
-    The response MUST be valid JSON in this format:
-    [
-      {
-        "filename": "original_filename.ext",
-        "suggested_path": "/Main_Category/Sub_Category/Year_or_Details/",
-        "category": "tax_document|business_document|personal_document|contract|other",
-        "confidence": 0.95,
-        "reasoning": "Brief explanation of why this folder structure was chosen",
-        "auto_create": true
-      }
-    ]`;
-
-    // Call OpenAI once
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "system",
-          content: "You are a professional document organization assistant. Always respond with valid JSON only."
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      max_tokens: 1000,
-      temperature: 0.2
-    });
-
-    const aiResponse = completion.choices[0]?.message?.content || '[]';
-
-    let analyses;
+// files from form data and multer then upload file to ask open ai for each file
+router.post(
+  "/analyze-files",
+  authenticateToken,
+  upload.array("files", 10),
+  async (req, res) => {
     try {
-      analyses = JSON.parse(aiResponse);
-    } catch (err) {
-      return res.json({
-        status: 'partial_success',
-        message: 'AI responded but JSON parsing failed',
-        raw_ai_response: aiResponse,
-        timestamp: new Date().toISOString()
+      console.log("Analyzing files...");
+      const userContext = req.body.userContext || null;
+      const accountId = req.body.accountId;
+
+      if (!req.files || req.files.length === 0) {
+        return res.status(400).json({
+          status: "error",
+          message: "At least one file is required",
+        });
+      }
+
+      const invalidFiles = req.files.filter(
+        (file) => !allowedMimeTypes.includes(file.mimetype)
+      );
+      if (invalidFiles.length > 0) {
+        return res.status(400).json({
+          status: "error",
+          message: "Invalid file types",
+          invalid_files: invalidFiles.map((file) => file.originalname),
+        });
+      }
+
+      console.log(
+        `Analyzing ${req.files.length} files for user: ${req.user.email}`
+      );
+
+      const analyses = [];
+
+      // 🔹 Process each file
+      for (const f of req.files) {
+        console.log(`Uploading: ${f.originalname}`);
+
+        // console.log("Req", req.files);
+        // 1️⃣ Upload file to OpenAI
+        // const uploaded = await openai.files.create({
+        //   file: bufferToStream(f.buffer), // ✅ wrap buffer
+        //   purpose: "assistants",
+        // });
+
+        // const fileMessage = {
+        //   type: f.mimetype.startsWith("image/") ? "image" : "file",
+        //   file: f.buffer,
+        //   file_id: uploaded.id
+        // };
+        // console.log("Uploaded file id:", uploaded.id);
+
+        // 2️⃣ Ask OpenAI to analyze that single file
+        const completion = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content:
+                "You are a professional document organization assistant. Always respond with valid JSON only.",
+            },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: `Analyze this file and suggest folder structure.
+
+                  User: ${req.user.given_name} ${req.user.family_name} (${
+                    req.user.email
+                  })
+                  Upload Date: ${new Date().toISOString().split("T")[0]}
+                  ${userContext ? `Business Context: ${userContext}` : ""}
+
+                  Respond with JSON only in this format:
+                  {
+                    "filename": "${f.originalname}",
+                    "suggested_path": "/Main_Category/Sub_Category/Year_or_Details/",
+                    "category": "tax_document|business_document|personal_document|contract|other",
+                    "confidence": 0.95,
+                    "reasoning": "Why this folder was chosen",
+                    "auto_create": true
+                  }`,
+                },
+                // fileMessage,
+              ],
+            },
+          ],
+          max_tokens: 600,
+          temperature: 0.2,
+        });
+
+        let aiResponse = completion.choices[0]?.message?.content || "{}";
+        aiResponse = aiResponse.replace(/```json|```/g, "").trim();
+
+        let parsed;
+        try {
+          parsed = JSON.parse(aiResponse);
+        } catch (err) {
+          parsed = {
+            filename: f.originalname,
+            error: "AI responded with invalid JSON",
+            raw_ai_response: aiResponse,
+          };
+        }
+
+        analyses.push({
+          filename: f.originalname,
+          fileType: f.mimetype, 
+          fileBuffer : f.buffer,
+          // openaiFileId: uploaded.id, // keep fileId for later retrieval
+          analysis: parsed,
+        });
+      }
+
+      // console.log("All files analyzed successfully");
+      // console.log("analysis" , analyses)
+
+      let uploadedFile = [];
+      const accountIdsString = accountId.toString();
+      const response = await getWorkDrive(accountIdsString);
+      const WorkDrives = response.map(account => {
+        const link = account.easyworkdriveforcrm__Workdrive_Folder_ID_EXT;
+          let folderId = null;
+          if (typeof link === 'string' && link.includes('/')) {
+            folderId = link.split('/').pop();
+          }
+          return {
+            id: account.id,
+            folderId
+          };
+      });
+      let WorkDrive = WorkDrives[0];
+      console.log("WorkDrive Folders:", WorkDrive);
+      for (const analysisItem of analyses) {
+        const suggestedPath = analysisItem.analysis?.suggested_path;
+        if (!suggestedPath) continue;
+        const pathParts = suggestedPath.split("/").filter(Boolean); // ["Main", "Sub", "Year"]
+        console.log(pathParts)
+        for (const folderName of pathParts) {
+          let folder = await getFolderByName(WorkDrive.folderId, folderName);
+          console.log("hecking folder ," , folder)
+          if (!folder) {
+            console.log("Folder not found, creating:", folderName);
+            folder = await createFolder(WorkDrive.folderId, folderName);
+            console.log("")
+            console.log("Created folder:", folderName);
+          }
+          WorkDrive.folderId = folder.id; // set parent for next level
+
+        }
+
+        // Upload the file to the final folder
+        console.log("WorkDrive.folderId, analysisItem.fileBuffer, analysisItem.filename" , WorkDrive.folderId, analysisItem.fileBuffer, analysisItem.filename)
+        const uploaded = await uploadFile(WorkDrive.folderId, analysisItem.fileBuffer, analysisItem.filename);
+        console.log("Uploaded file:", analysisItem.filename, "to folder:", WorkDrive.folderId);
+        console.log("uploadedFile ", uploadedFile)
+        uploadedFile.push({
+          filename: analysisItem.filename,
+          fileType: analysisItem.fileType,
+          parent_id : WorkDrive.folderId,
+          fileId: uploaded?.id 
+        });
+      }
+      res.json({
+        status: "success",
+        message: "File analyses completed",
+        uploadedFile,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("Batch file analysis failed:", error);
+      res.status(500).json({
+        status: "error",
+        message: "Failed to analyze files",
+        error: error.message,
       });
     }
-
-    // Validate each analysis has filename
-    const validated = files.map(file => {
-      const match = analyses.find(a => a.filename === file.filename);
-      return {
-        filename: file.filename,
-        fileType: file.fileType,
-        analysis: match || null
-      };
-    });
-
-    res.json({
-      status: 'success',
-      message: 'File analyses completed',
-      analyses: validated,
-      timestamp: new Date().toISOString()
-    });
-
-  } catch (error) {
-    console.error('Batch file analysis failed:', error.message);
-    res.status(500).json({
-      status: 'error',
-      message: 'Failed to analyze files',
-      error: error.message
-    });
   }
-});
+);
 
 
 // Test folder structure generation
-router.post('/suggest-folders', authenticateToken, async (req, res) => {
+router.post("/suggest-folders", authenticateToken, async (req, res) => {
   try {
     const { documentTypes } = req.body;
-    
+
     console.log(`Generating folder structure for user: ${req.user.email}`);
 
     const prompt = `Create a comprehensive folder structure for a user's document management system.
 
 User: ${req.user.given_name} ${req.user.family_name}
-Document Types to Consider: ${documentTypes || 'tax documents, business documents, personal documents, contracts'}
+Document Types to Consider: ${
+      documentTypes ||
+      "tax documents, business documents, personal documents, contracts"
+    }
 
 Create a logical, hierarchical folder structure that would work well for document organization. Include common categories like:
 - Tax documents (by year and form type)
@@ -295,53 +417,52 @@ Respond with a JSON array of folder paths:
       messages: [
         {
           role: "system",
-          content: "You are a professional document organization consultant. Respond with valid JSON only."
+          content:
+            "You are a professional document organization consultant. Respond with valid JSON only.",
         },
         {
           role: "user",
-          content: prompt
-        }
+          content: prompt,
+        },
       ],
       max_tokens: 500,
-      temperature: 0.3
+      temperature: 0.3,
     });
 
-    const aiResponse = completion.choices[0]?.message?.content || '{}';
-    
+    const aiResponse = completion.choices[0]?.message?.content || "{}";
+
     try {
       const folderStructure = JSON.parse(aiResponse);
-      
+
       res.json({
-        status: 'success',
-        message: 'Folder structure generated',
+        status: "success",
+        message: "Folder structure generated",
         user_info: {
           name: `${req.user.given_name} ${req.user.family_name}`,
-          email: req.user.email
+          email: req.user.email,
         },
         suggested_structure: folderStructure,
         usage: completion.usage,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
-
     } catch (parseError) {
       res.json({
-        status: 'partial_success',
-        message: 'Folder structure generated but needs format adjustment',
+        status: "partial_success",
+        message: "Folder structure generated but needs format adjustment",
         raw_ai_response: aiResponse,
         usage: completion.usage,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
     }
-
   } catch (error) {
-    console.error('Folder structure generation failed:', error.message);
-    
+    console.error("Folder structure generation failed:", error.message);
+
     res.status(500).json({
-      status: 'error',
-      message: 'Failed to generate folder structure',
-      error: error.message
+      status: "error",
+      message: "Failed to generate folder structure",
+      error: error.message,
     });
   }
 });
 
-export default router; 
+export default router;
