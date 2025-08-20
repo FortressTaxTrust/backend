@@ -127,7 +127,7 @@ export async function createFolder(parentId, folderName) {
 }
 
 // Upload file to folder
-export async function uploadFile(folderId, fileBuffer, filename, override = 'false') {
+export async function uploadFile(folderId, fileBuffer, filename, override = 'true') {
 
   const formData = new FormData();
   formData.append('content', fileBuffer, { filename });
@@ -768,6 +768,65 @@ router.get('/workdrive/file/:fileId', async (req, res) => {
       message: 'Failed to get WorkDrive file/folder metadata',
       error: error.response?.data || error.message
     });
+  }
+});
+
+router.get("/workdrive/download/:fileId", async (req, res) => {
+  const { fileId } = req.params;
+  try {
+    const oneDayLater = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split("T")[0].replace(/-/g, "-");
+    const data = {
+      data: {
+        attributes: {
+          resource_id: fileId,
+          link_name: "User Requested File",
+          link_type: "download",
+          request_user_data: "false",
+          allow_download: "true",
+          expiration_date:oneDayLater,
+          download_link: {
+            download_limit: "5"
+          }
+        },
+        type: "links"
+      }
+    };
+    const url = `${ZOHO_CONFIG.baseUrlWorkdrive}/links`;
+    const response = await makeZohoAPICall(url, 'POST', data, 0, true);
+    res.json({
+      status: 'success',
+      downloadUrl: response.data.attributes.download_url,
+      expiration_date: response.data.attributes.expiration_date,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    res.status(500).json({ error: "File download failed" });
+  }
+});
+
+router.get("/workdrive/:fileId/preview", async (req, res) => {
+  const { fileId } = req.params;
+  try {
+    const data = {
+        data: {
+          attributes: {
+            resource_id: fileId,
+            shared_type: "publish",
+            role_id: "34"
+          },
+          type: "permissions"
+      }
+    };
+    const url = `${ZOHO_CONFIG.baseUrlWorkdrive}/permissions`;
+    const response = await makeZohoAPICall(url, 'POST', data, 0, true);
+    res.json({
+      status: 'success',
+      permalink: response?.data?.attributes?.permalink,
+      expiration_date: response?.data?.attributes?.shared_time,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    res.status(500).json({ error: "File Preview failed" });
   }
 });
 
