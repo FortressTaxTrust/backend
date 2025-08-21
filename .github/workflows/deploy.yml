@@ -67,20 +67,20 @@ jobs:
         # Create .elasticbeanstalk/config.yml if it doesn't exist
         if [ ! -f .elasticbeanstalk/config.yml ]; then
           echo "Initializing Elastic Beanstalk configuration..."
-          eb init --platform "Node.js" --region ${{ env.AWS_REGION }} --platform-version "Node.js 18" --application-name "${{ secrets.EB_APPLICATION_NAME }}" --environment-name "${{ secrets.EB_ENVIRONMENT_NAME }}" --service-role "${{ secrets.EB_SERVICE_ROLE }}"
+          eb init --platform "Node.js" --region ${{ env.AWS_REGION }} --platform-version "Node.js 18" --application-name "${{ secrets.EB_APPLICATION_NAME }}" --environment-name "${{ secrets.EB_STAGING_ENVIRONMENT }}" --service-role "${{ secrets.EB_SERVICE_ROLE }}"
         fi
         
         # Show EB status before deployment
         echo "Current EB status:"
-        eb status --environment "${{ secrets.EB_ENVIRONMENT_NAME }}" --region ${{ env.AWS_REGION }}
+        eb status --environment "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }}
         
         # Deploy to existing environment
         echo "Starting deployment to Elastic Beanstalk..."
-        eb deploy --environment "${{ secrets.EB_ENVIRONMENT_NAME }}" --region ${{ env.AWS_REGION }} --timeout 20
+        eb deploy --environment "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} --timeout 20
         
         # Show deployment status
         echo "Deployment completed. Current status:"
-        eb status --environment "${{ secrets.EB_ENVIRONMENT_NAME }}" --region ${{ env.AWS_REGION }}
+        eb status --environment "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }}
         
     - name: Health check
       run: |
@@ -88,7 +88,7 @@ jobs:
         sleep 60
         
         # Get the EB environment URL
-        EB_URL=$(eb status --environment "${{ secrets.EB_ENVIRONMENT_NAME }}" --region ${{ env.AWS_REGION }} --output json | jq -r '.Environment.CNAME')
+        EB_URL=$(eb status --environment "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} --output json | jq -r '.Environment.CNAME')
         
         # Test the health endpoint
         curl -f "http://$EB_URL/health" || exit 1

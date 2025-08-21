@@ -138,7 +138,7 @@ jobs:
         
         # Show current EB status
         echo "Current Elastic Beanstalk status:"
-        eb status --environment "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }}
+        eb status --region ${{ env.AWS_REGION }}
         
         # Deploy to staging with timeout
         echo "Starting deployment to Elastic Beanstalk staging..."
