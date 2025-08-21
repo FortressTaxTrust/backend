@@ -142,20 +142,20 @@ jobs:
         
         # Deploy to staging with timeout
         echo "Starting deployment to Elastic Beanstalk staging..."
-        eb deploy --environment "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} --timeout 20
+        eb deploy "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} --timeout 20
         
         # Wait for deployment to complete
         echo "Waiting for deployment to stabilize..."
-        eb status --environment "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} --wait
+        eb status "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }}
         
         # Show environment info
         echo "Environment information:"
-        eb printenv --environment "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} || echo "No environment variables set"
+        eb printenv "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} || echo "No environment variables set"
         
     - name: Staging Health Check
       run: |
         sleep 30
-        EB_URL=$(eb status --environment "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} --output json | jq -r '.Environment.CNAME')
+        EB_URL=$(eb status "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} --output json | jq -r '.Environment.CNAME')
         curl -f "http://$EB_URL/health" || exit 1
 
   deploy-production:
@@ -192,20 +192,20 @@ jobs:
       run: |
         # Set production environment variables
         echo "Setting production environment variables..."
-        eb setenv NODE_ENV=production --environment "${{ secrets.EB_PRODUCTION_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} || true
+        eb setenv NODE_ENV=production "${{ secrets.EB_PRODUCTION_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} || true
         
         # Deploy to production with timeout
         echo "Starting production deployment to Elastic Beanstalk..."
-        eb deploy --environment "${{ secrets.EB_PRODUCTION_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} --timeout 30
+        eb deploy "${{ secrets.EB_PRODUCTION_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} --timeout 30
         
         # Wait for deployment to complete
         echo "Waiting for production deployment to stabilize..."
-        eb status --environment "${{ secrets.EB_PRODUCTION_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} --wait
+        eb status "${{ secrets.EB_PRODUCTION_ENVIRONMENT }}" --region ${{ env.AWS_REGION }}
         
     - name: Production Health Check
       run: |
         sleep 60
-        EB_URL=$(eb status --environment "${{ secrets.EB_PRODUCTION_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} --output json | jq -r '.Environment.CNAME')
+        EB_URL=$(eb status "${{ secrets.EB_PRODUCTION_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} --output json | jq -r '.Environment.CNAME')
         curl -f "http://$EB_URL/health" || exit 1
         
     - name: Notify Production Deployment
