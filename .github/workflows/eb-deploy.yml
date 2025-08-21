@@ -1,0 +1,298 @@
+name: Elastic Beanstalk Deployment
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'EB Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+        - deploy
+        - status
+        - logs
+        - health-check
+
+env:
+  NODE_VERSION: '18'
+  AWS_REGION: us-east-1
+
+jobs:
+  eb-deploy:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'deploy')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+        
+    - name: Install EB CLI
+      run: |
+        pip install awsebcli
+        
+    - name: Setup Elastic Beanstalk
+      run: |
+        # Create EB configuration
+        mkdir -p .elasticbeanstalk
+        
+        # Determine target environment
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          TARGET_ENV="${{ github.event.inputs.environment }}"
+        else
+          TARGET_ENV="staging"
+        fi
+        
+        # Set environment-specific variables
+        if [ "$TARGET_ENV" == "production" ]; then
+          EB_ENV="${{ secrets.EB_PRODUCTION_ENVIRONMENT }}"
+          NODE_ENV="production"
+        else
+          EB_ENV="${{ secrets.EB_STAGING_ENVIRONMENT }}"
+          NODE_ENV="staging"
+        fi
+        
+        echo "Target environment: $TARGET_ENV"
+        echo "EB environment: $EB_ENV"
+        echo "NODE_ENV: $NODE_ENV"
+        
+        # Create config.yml
+        cat > .elasticbeanstalk/config.yml << EOF
+        branch-defaults:
+          main:
+            environment: $EB_ENV
+            group_suffix: null
+        global:
+          application_name: ${{ secrets.EB_APPLICATION_NAME }}
+          branch: null
+          default_ec2_keyname: null
+          default_platform: Node.js 18
+          default_region: ${{ env.AWS_REGION }}
+          include_git_submodules: true
+          instance_profile: null
+          platform_name: null
+          platform_version: null
+          profile: null
+          repository: null
+          sc: git
+          workspace_type: Application
+        EOF
+        
+        # Initialize EB if needed
+        if [ ! -f .elasticbeanstalk/config.yml ]; then
+          eb init --platform "Node.js" --region ${{ env.AWS_REGION }} --platform-version "Node.js 18" --application-name "${{ secrets.EB_APPLICATION_NAME }}" --environment-name "$EB_ENV" --service-role "${{ secrets.EB_SERVICE_ROLE }}"
+        fi
+        
+    - name: Deploy to Elastic Beanstalk
+      run: |
+        # Determine target environment
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          TARGET_ENV="${{ github.event.inputs.environment }}"
+        else
+          TARGET_ENV="staging"
+        fi
+        
+        if [ "$TARGET_ENV" == "production" ]; then
+          EB_ENV="${{ secrets.EB_PRODUCTION_ENVIRONMENT }}"
+          NODE_ENV="production"
+        else
+          EB_ENV="${{ secrets.EB_STAGING_ENVIRONMENT }}"
+          NODE_ENV="staging"
+        fi
+        
+        echo "🚀 Deploying to Elastic Beanstalk environment: $EB_ENV"
+        
+        # Show current status
+        echo "Current status:"
+        eb status --environment "$EB_ENV" --region ${{ env.AWS_REGION }}
+        
+        # Set environment variables
+        echo "Setting environment variables..."
+        eb setenv NODE_ENV=$NODE_ENV --environment "$EB_ENV" --region ${{ env.AWS_REGION }} || true
+        
+        # Deploy with timeout
+        echo "Starting deployment..."
+        eb deploy --environment "$EB_ENV" --region ${{ env.AWS_REGION }} --timeout 30
+        
+        # Wait for deployment to stabilize
+        echo "Waiting for deployment to stabilize..."
+        eb status --environment "$EB_ENV" --region ${{ env.AWS_REGION }} --wait
+        
+        # Show final status
+        echo "Deployment completed. Final status:"
+        eb status --environment "$EB_ENV" --region ${{ env.AWS_REGION }}
+        
+    - name: Health Check
+      run: |
+        # Determine target environment
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          TARGET_ENV="${{ github.event.inputs.environment }}"
+        else
+          TARGET_ENV="staging"
+        fi
+        
+        if [ "$TARGET_ENV" == "production" ]; then
+          EB_ENV="${{ secrets.EB_PRODUCTION_ENVIRONMENT }}"
+          SLEEP_TIME=60
+        else
+          EB_ENV="${{ secrets.EB_STAGING_ENVIRONMENT }}"
+          SLEEP_TIME=30
+        fi
+        
+        echo "Waiting $SLEEP_TIME seconds for health check..."
+        sleep $SLEEP_TIME
+        
+        # Get environment URL and test health
+        EB_URL=$(eb status --environment "$EB_ENV" --region ${{ env.AWS_REGION }} --output json | jq -r '.Environment.CNAME')
+        echo "Testing health endpoint: http://$EB_URL/health"
+        curl -f "http://$EB_URL/health" || exit 1
+        
+        echo "✅ Health check passed for $EB_ENV"
+        
+    - name: Show Environment Info
+      run: |
+        # Determine target environment
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          TARGET_ENV="${{ github.event.inputs.environment }}"
+        else
+          TARGET_ENV="staging"
+        fi
+        
+        if [ "$TARGET_ENV" == "production" ]; then
+          EB_ENV="${{ secrets.EB_PRODUCTION_ENVIRONMENT }}"
+        else
+          EB_ENV="${{ secrets.EB_STAGING_ENVIRONMENT }}"
+        fi
+        
+        echo "📊 Environment information for $EB_ENV:"
+        eb printenv --environment "$EB_ENV" --region ${{ env.AWS_REGION }} || echo "No environment variables set"
+        
+        echo "🔍 Recent events:"
+        eb events --environment "$EB_ENV" --region ${{ env.AWS_REGION }} --limit 5 || echo "No recent events"
+
+  eb-status:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'status'
+    
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+        
+    - name: Install EB CLI
+      run: |
+        pip install awsebcli
+        
+    - name: Check EB Status
+      run: |
+        TARGET_ENV="${{ github.event.inputs.environment }}"
+        
+        if [ "$TARGET_ENV" == "production" ]; then
+          EB_ENV="${{ secrets.EB_PRODUCTION_ENVIRONMENT }}"
+        else
+          EB_ENV="${{ secrets.EB_STAGING_ENVIRONMENT }}"
+        fi
+        
+        echo "📊 Status for $EB_ENV:"
+        eb status --environment "$EB_ENV" --region ${{ env.AWS_REGION }}
+        
+        echo "🔍 Recent events:"
+        eb events --environment "$EB_ENV" --region ${{ env.AWS_REGION }} --limit 10
+
+  eb-logs:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'logs'
+    
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+        
+    - name: Install EB CLI
+      run: |
+        pip install awsebcli
+        
+    - name: Get EB Logs
+      run: |
+        TARGET_ENV="${{ github.event.inputs.environment }}"
+        
+        if [ "$TARGET_ENV" == "production" ]; then
+          EB_ENV="${{ secrets.EB_PRODUCTION_ENVIRONMENT }}"
+        else
+          EB_ENV="${{ secrets.EB_STAGING_ENVIRONMENT }}"
+        fi
+        
+        echo "📋 Getting logs for $EB_ENV..."
+        eb logs --environment "$EB_ENV" --region ${{ env.AWS_REGION }} --all
+
+  eb-health:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'health-check'
+    
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+        
+    - name: Install EB CLI
+      run: |
+        pip install awsebcli
+        
+    - name: Health Check
+      run: |
+        TARGET_ENV="${{ github.event.inputs.environment }}"
+        
+        if [ "$TARGET_ENV" == "production" ]; then
+          EB_ENV="${{ secrets.EB_PRODUCTION_ENVIRONMENT }}"
+        else
+          EB_ENV="${{ secrets.EB_STAGING_ENVIRONMENT }}"
+        fi
+        
+        echo "🏥 Running health check for $EB_ENV..."
+        
+        # Get environment URL
+        EB_URL=$(eb status --environment "$EB_ENV" --region ${{ env.AWS_REGION }} --output json | jq -r '.Environment.CNAME')
+        echo "Environment URL: http://$EB_URL"
+        
+        # Test health endpoint
+        echo "Testing /health endpoint..."
+        curl -f "http://$EB_URL/health" || exit 1
+        
+        echo "✅ Health check passed!"
