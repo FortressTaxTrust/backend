@@ -72,15 +72,15 @@ jobs:
         
         # Show EB status before deployment
         echo "Current EB status:"
-        eb status --environment "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }}
+        eb status "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }}
         
         # Deploy to existing environment
         echo "Starting deployment to Elastic Beanstalk..."
-        eb deploy --environment "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} --timeout 20
+        eb deploy "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} --timeout 20
         
         # Show deployment status
         echo "Deployment completed. Current status:"
-        eb status --environment "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }}
+        eb status "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }}
         
     - name: Health check
       run: |
@@ -88,7 +88,7 @@ jobs:
         sleep 60
         
         # Get the EB environment URL
-        EB_URL=$(eb status --environment "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} --output json | jq -r '.Environment.CNAME')
+        EB_URL=$(eb status "${{ secrets.EB_STAGING_ENVIRONMENT }}" --region ${{ env.AWS_REGION }} --output json | jq -r '.Environment.CNAME')
         
         # Test the health endpoint
         curl -f "http://$EB_URL/health" || exit 1
