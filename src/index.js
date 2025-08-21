@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { healthRouter } from './routes/health.js';
 import { protectedRouter } from './routes/protected.js';
 import { testRouter } from './routes/test.js';
 import authRouter from './routes/auth.js';
@@ -17,7 +16,8 @@ const requiredEnvVars = [
   'NEXT_PUBLIC_COGNITO_USER_POOL_ID',
   'NEXT_PUBLIC_COGNITO_CLIENT_ID',
   'AWS_ACCESS_KEY_ID',
-  'AWS_SECRET_ACCESS_KEY'
+  'AWS_SECRET_ACCESS_KEY',
+  'OPENAI_API_KEY'
 ];
 
 const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
@@ -35,12 +35,16 @@ console.log('Environment Configuration:', {
   hasClientSecret: !!process.env.NEXT_PUBLIC_COGNITO_CLIENT_SECRET,
   hasAccessKey: !!process.env.AWS_ACCESS_KEY_ID,
   hasSecretKey: !!process.env.AWS_SECRET_ACCESS_KEY,
+  hasOpenAIKey: !!process.env.OPENAI_API_KEY,
   nodeEnv: process.env.NODE_ENV,
   port: process.env.PORT
 });
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 8080;
+
+// Public health check route (must be first, before any middleware that might fail)
+app.get('/health', (_req, res) => res.status(200).send('OK'));
 
 // Middleware
 app.use(cors());
@@ -93,7 +97,6 @@ app.get('/', (req, res) => {
 });
 
 // Routes
-app.use('/health', healthRouter);
 app.use('/api', protectedRouter);
 app.use('/test', testRouter);
 app.use('/auth', authRouter);
@@ -117,5 +120,7 @@ app.use((err, req, res, next) => {
 
 // Start server
 app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
+  console.log(`🚀 Server is running on port ${port}`);
+  console.log(`🏥 Health check available at: http://localhost:${port}/health`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
 }); 
