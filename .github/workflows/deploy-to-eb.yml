@@ -1,0 +1,603 @@
+name: Deploy to AWS Elastic Beanstalk
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📋 Deployment Information
+        run: |
+          echo "=========================================="
+          echo "🚀 DEPLOYMENT INITIATED"
+          echo "=========================================="
+          echo "📅 Time: $(date)"
+          echo "🔧 Triggered by: ${{ github.actor }}"
+          echo "📌 Event: ${{ github.event_name }}"
+          echo "🌿 Branch: ${{ github.ref_name }}"
+          echo "💾 Commit: ${{ github.sha }}"
+          echo "=========================================="
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        id: checkout
+        continue-on-error: false
+
+      - name: Verify checkout
+        run: |
+          echo "✅ Code checked out successfully"
+          echo "📁 Current directory: $(pwd)"
+          echo "📋 Files in root:"
+          ls -la
+          
+          # Check for essential files
+          if [ ! -f "package.json" ]; then
+            echo "❌ ERROR: package.json not found!"
+            exit 1
+          fi
+          
+          if [ ! -f "Procfile" ]; then
+            echo "⚠️  WARNING: Procfile not found. EB might use default start command."
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+        id: setup-node
+
+      - name: Verify Node.js setup
+        run: |
+          echo "✅ Node.js setup complete"
+          echo "📦 Node version: $(node --version)"
+          echo "📦 NPM version: $(npm --version)"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+        id: aws-creds
+
+      - name: Verify AWS credentials
+        run: |
+          echo "🔐 Testing AWS credentials..."
+          
+          # Test AWS access
+          if aws sts get-caller-identity > /dev/null 2>&1; then
+            echo "✅ AWS credentials are valid"
+            echo "👤 AWS Account ID: $(aws sts get-caller-identity --query Account --output text)"
+            echo "🔑 IAM User/Role: $(aws sts get-caller-identity --query Arn --output text)"
+          else
+            echo "❌ ERROR: AWS credentials are invalid or not configured!"
+            echo "Please check your GitHub secrets:"
+            echo "  - AWS_ACCESS_KEY_ID"
+            echo "  - AWS_SECRET_ACCESS_KEY"
+            exit 1
+          fi
+          
+          # Check if we can access Elastic Beanstalk
+          echo ""
+          echo "🔍 Checking Elastic Beanstalk access..."
+          if aws elasticbeanstalk describe-applications --region us-east-1 > /dev/null 2>&1; then
+            echo "✅ Can access Elastic Beanstalk"
+          else
+            echo "❌ ERROR: Cannot access Elastic Beanstalk. Check IAM permissions!"
+            exit 1
+          fi
+
+      - name: Install EB CLI
+        run: |
+          echo "📦 Installing EB CLI..."
+          python -m pip install --upgrade pip
+          pip install awsebcli --upgrade
+          
+          # Verify installation
+          if command -v eb &> /dev/null; then
+            echo "✅ EB CLI installed successfully"
+            echo "📌 EB CLI version: $(eb --version)"
+          else
+            echo "❌ ERROR: EB CLI installation failed!"
+            exit 1
+          fi
+
+      - name: Validate GitHub Secrets
+        run: |
+          echo "🔍 Validating required GitHub secrets..."
+          
+          MISSING_SECRETS=""
+          
+          if [ -z "${{ secrets.EB_APPLICATION_NAME }}" ]; then
+            MISSING_SECRETS="${MISSING_SECRETS}EB_APPLICATION_NAME "
+          else
+            echo "✅ EB_APPLICATION_NAME is set"
+          fi
+          
+          if [ -z "${{ secrets.EB_STAGING_ENVIRONMENT }}" ]; then
+            MISSING_SECRETS="${MISSING_SECRETS}EB_STAGING_ENVIRONMENT "
+          else
+            echo "✅ EB_STAGING_ENVIRONMENT is set"
+          fi
+          
+          if [ -n "$MISSING_SECRETS" ]; then
+            echo "❌ ERROR: Missing required GitHub secrets: $MISSING_SECRETS"
+            echo ""
+            echo "Please add these secrets in your GitHub repository:"
+            echo "Settings → Secrets and variables → Actions → New repository secret"
+            exit 1
+          fi
+          
+          echo "✅ All required secrets are configured"
+
+      - name: Determine deployment environment
+        id: deployment
+        run: |
+          echo "🎯 Determining deployment target..."
+          
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            TARGET_ENV="${{ github.event.inputs.environment }}"
+            echo "📌 Manual deployment to: $TARGET_ENV"
+          else
+            TARGET_ENV="staging"
+            echo "📌 Automatic deployment to: $TARGET_ENV (default for push events)"
+          fi
+          
+          echo "target_env=$TARGET_ENV" >> $GITHUB_OUTPUT
+          
+          if [ "$TARGET_ENV" == "production" ]; then
+            # Check if production environment is configured
+            if [ -z "${{ secrets.EB_PRODUCTION_ENVIRONMENT }}" ]; then
+              echo "⚠️  WARNING: EB_PRODUCTION_ENVIRONMENT secret not set"
+              echo "📌 Using default environment: FortressFromTheBack-env"
+              echo "eb_env=FortressFromTheBack-env" >> $GITHUB_OUTPUT
+            else
+              echo "eb_env=${{ secrets.EB_PRODUCTION_ENVIRONMENT }}" >> $GITHUB_OUTPUT
+            fi
+            echo "node_env=production" >> $GITHUB_OUTPUT
+          else
+            echo "eb_env=${{ secrets.EB_STAGING_ENVIRONMENT || 'FortressFromTheBack-env' }}" >> $GITHUB_OUTPUT
+            echo "node_env=staging" >> $GITHUB_OUTPUT
+          fi
+          
+          echo ""
+          echo "📋 Deployment configuration:"
+          echo "  - Target Environment: $TARGET_ENV"
+          echo "  - EB Environment: $(grep eb_env $GITHUB_OUTPUT | cut -d= -f2)"
+          echo "  - NODE_ENV: $(grep node_env $GITHUB_OUTPUT | cut -d= -f2)"
+
+      - name: Verify EB Application Exists
+        run: |
+          echo "🔍 Verifying Elastic Beanstalk application..."
+          
+          APP_NAME="${{ secrets.EB_APPLICATION_NAME }}"
+          
+          # Check if application exists
+          if aws elasticbeanstalk describe-applications --application-names "$APP_NAME" --region us-east-1 --query "Applications[?ApplicationName=='$APP_NAME']" --output text | grep -q "$APP_NAME"; then
+            echo "✅ Application '$APP_NAME' exists"
+            
+            # Get application details
+            echo ""
+            echo "📋 Application details:"
+            aws elasticbeanstalk describe-applications --application-names "$APP_NAME" --region us-east-1 --output table
+          else
+            echo "❌ ERROR: Application '$APP_NAME' not found in Elastic Beanstalk!"
+            echo ""
+            echo "Please ensure:"
+            echo "1. The application exists in AWS Elastic Beanstalk"
+            echo "2. The EB_APPLICATION_NAME secret matches your application name exactly"
+            echo "3. You're using the correct AWS region (us-east-1)"
+            exit 1
+          fi
+
+      - name: Verify EB Environment Exists
+        run: |
+          echo "🔍 Verifying Elastic Beanstalk environment..."
+          
+          ENV_NAME="${{ steps.deployment.outputs.eb_env }}"
+          APP_NAME="${{ secrets.EB_APPLICATION_NAME }}"
+          
+          # Check if environment exists
+          if aws elasticbeanstalk describe-environments --environment-names "$ENV_NAME" --application-name "$APP_NAME" --region us-east-1 --query "Environments[?EnvironmentName=='$ENV_NAME']" --output text | grep -q "$ENV_NAME"; then
+            echo "✅ Environment '$ENV_NAME' exists"
+            
+            # Get environment status
+            ENV_STATUS=$(aws elasticbeanstalk describe-environments --environment-names "$ENV_NAME" --application-name "$APP_NAME" --region us-east-1 --query "Environments[0].Status" --output text)
+            ENV_HEALTH=$(aws elasticbeanstalk describe-environments --environment-names "$ENV_NAME" --application-name "$APP_NAME" --region us-east-1 --query "Environments[0].Health" --output text)
+            
+            echo ""
+            echo "📋 Environment details:"
+            echo "  - Status: $ENV_STATUS"
+            echo "  - Health: $ENV_HEALTH"
+            echo "  - URL: http://$ENV_NAME.eba-sutmczbk.us-east-1.elasticbeanstalk.com"
+            
+            if [ "$ENV_STATUS" == "Terminated" ]; then
+              echo "❌ ERROR: Environment is terminated!"
+              exit 1
+            fi
+            
+            if [ "$ENV_STATUS" == "Terminating" ]; then
+              echo "❌ ERROR: Environment is being terminated!"
+              exit 1
+            fi
+          else
+            echo "❌ ERROR: Environment '$ENV_NAME' not found!"
+            echo ""
+            echo "Available environments for application '$APP_NAME':"
+            aws elasticbeanstalk describe-environments --application-name "$APP_NAME" --region us-east-1 --query "Environments[*].EnvironmentName" --output table
+            exit 1
+          fi
+
+      - name: Initialize EB CLI
+        run: |
+          echo "🔧 Initializing EB CLI..."
+          
+          # Create .elasticbeanstalk directory if it doesn't exist
+          mkdir -p .elasticbeanstalk
+          
+          # Create config.yml for EB CLI
+          cat > .elasticbeanstalk/config.yml << EOF
+          branch-defaults:
+            default:
+              environment: ${{ steps.deployment.outputs.eb_env }}
+          environment-defaults:
+            ${{ steps.deployment.outputs.eb_env }}:
+              branch: null
+              repository: null
+          global:
+            application_name: ${{ secrets.EB_APPLICATION_NAME }}
+            default_ec2_keyname: null
+            default_platform: Node.js 22 running on 64bit Amazon Linux 2023
+            default_region: us-east-1
+            include_git_submodules: true
+            instance_profile: null
+            platform_name: null
+            platform_version: null
+            profile: null
+            sc: git
+            workspace_type: Application
+          EOF
+          
+          # Display the config for debugging
+          echo ""
+          echo "📄 EB CLI Configuration:"
+          echo "================================"
+          cat .elasticbeanstalk/config.yml
+          echo "================================"
+          
+          # Verify EB CLI can connect
+          echo ""
+          echo "🔍 Testing EB CLI connection..."
+          if eb list; then
+            echo "✅ EB CLI configured successfully"
+          else
+            echo "❌ ERROR: EB CLI configuration failed!"
+            echo "Please check the configuration above"
+            exit 1
+          fi
+
+      - name: Pre-deployment Environment Status
+        run: |
+          echo "📊 Current environment status before deployment:"
+          echo "================================================"
+          
+          # Get detailed status
+          eb status ${{ steps.deployment.outputs.eb_env }} | while IFS= read -r line; do
+            echo "  $line"
+          done
+          
+          # Additional health information
+          echo ""
+          echo "🏥 Environment health details:"
+          aws elasticbeanstalk describe-environment-health \
+            --environment-name "${{ steps.deployment.outputs.eb_env }}" \
+            --attribute-names All \
+            --region us-east-1 \
+            --output table || echo "  ⚠️  Could not retrieve detailed health info"
+
+      - name: Set environment variables
+        run: |
+          echo "⚙️  Setting environment variables..."
+          
+          ENV_VARS="NODE_ENV=${{ steps.deployment.outputs.node_env }}"
+          
+          echo "📝 Variables to set: $ENV_VARS"
+          
+          # Set environment variables with error handling
+          if eb setenv $ENV_VARS -e ${{ steps.deployment.outputs.eb_env }}; then
+            echo "✅ Environment variables set successfully"
+            
+            # Verify the variables were set
+            echo ""
+            echo "📋 Current environment variables:"
+            aws elasticbeanstalk describe-configuration-settings \
+              --application-name "${{ secrets.EB_APPLICATION_NAME }}" \
+              --environment-name "${{ steps.deployment.outputs.eb_env }}" \
+              --region us-east-1 \
+              --query "ConfigurationSettings[0].OptionSettings[?OptionName=='NODE_ENV']" \
+              --output table
+          else
+            echo "⚠️  WARNING: Failed to set environment variables"
+            echo "Deployment will continue, but NODE_ENV might not be set correctly"
+          fi
+
+      - name: Create deployment package
+        run: |
+          echo "📦 Preparing deployment package..."
+          
+          # Show what will be deployed
+          echo "Files to be deployed:"
+          git ls-files | head -20
+          echo "..."
+          echo "Total files: $(git ls-files | wc -l)"
+          
+          # Check for large files
+          echo ""
+          echo "🔍 Checking for large files (>5MB)..."
+          find . -type f -size +5M -not -path "./.git/*" -not -path "./node_modules/*" | while read -r file; do
+            size=$(du -h "$file" | cut -f1)
+            echo "  ⚠️  Large file: $file ($size)"
+          done || echo "  ✅ No large files found"
+          
+          # Verify .gitignore
+          if [ -f .gitignore ]; then
+            echo ""
+            echo "📋 .gitignore contents (first 10 lines):"
+            head -10 .gitignore
+          fi
+
+      - name: Deploy to Elastic Beanstalk
+        id: deploy
+        run: |
+          echo "🚀 Starting deployment..."
+          echo "================================"
+          
+          # Start deployment with verbose output
+          echo "Running: eb deploy ${{ steps.deployment.outputs.eb_env }} --timeout 30"
+          
+          # Deploy and capture output
+          if eb deploy ${{ steps.deployment.outputs.eb_env }} --timeout 30 2>&1 | tee deploy.log; then
+            echo ""
+            echo "✅ Deployment command completed successfully"
+            DEPLOY_SUCCESS=true
+          else
+            echo ""
+            echo "❌ Deployment command failed!"
+            DEPLOY_SUCCESS=false
+            
+            # Show the last 50 lines of deployment log for debugging
+            echo ""
+            echo "📋 Last 50 lines of deployment output:"
+            tail -50 deploy.log
+          fi
+          
+          # Save deployment status
+          echo "deploy_success=$DEPLOY_SUCCESS" >> $GITHUB_OUTPUT
+          
+      - name: Monitor Deployment Progress
+        run: |
+          echo "⏳ Monitoring deployment progress..."
+          echo "================================"
+          
+          timeout=600  # 10 minutes
+          elapsed=0
+          interval=20
+          last_event_time=""
+          
+          while [ $elapsed -lt $timeout ]; do
+            # Get current environment status
+            ENV_STATUS=$(aws elasticbeanstalk describe-environments \
+              --environment-names "${{ steps.deployment.outputs.eb_env }}" \
+              --application-name "${{ secrets.EB_APPLICATION_NAME }}" \
+              --region us-east-1 \
+              --query "Environments[0].Status" \
+              --output text)
+            
+            ENV_HEALTH=$(aws elasticbeanstalk describe-environments \
+              --environment-names "${{ steps.deployment.outputs.eb_env }}" \
+              --application-name "${{ secrets.EB_APPLICATION_NAME }}" \
+              --region us-east-1 \
+              --query "Environments[0].Health" \
+              --output text)
+            
+            echo ""
+            echo "[$elapsed seconds] Status: $ENV_STATUS | Health: $ENV_HEALTH"
+            
+            # Check for recent events
+            RECENT_EVENTS=$(aws elasticbeanstalk describe-events \
+              --environment-name "${{ steps.deployment.outputs.eb_env }}" \
+              --application-name "${{ secrets.EB_APPLICATION_NAME }}" \
+              --region us-east-1 \
+              --max-records 5 \
+              --query "Events[?EventDate > \`$(date -u -d '2 minutes ago' '+%Y-%m-%dT%H:%M:%S')\`].[EventDate,Message]" \
+              --output text 2>/dev/null || echo "")
+            
+            if [ -n "$RECENT_EVENTS" ]; then
+              echo "📋 Recent events:"
+              echo "$RECENT_EVENTS" | while IFS=$'\t' read -r timestamp message; do
+                echo "  [$timestamp] $message"
+              done
+            fi
+            
+            # Check if deployment is complete
+            if [ "$ENV_STATUS" == "Ready" ] && ([ "$ENV_HEALTH" == "Ok" ] || [ "$ENV_HEALTH" == "Info" ]); then
+              echo ""
+              echo "✅ Deployment completed successfully!"
+              break
+            fi
+            
+            # Check for failure conditions
+            if [ "$ENV_STATUS" == "Terminated" ] || [ "$ENV_STATUS" == "Terminating" ]; then
+              echo ""
+              echo "❌ ERROR: Environment was terminated during deployment!"
+              exit 1
+            fi
+            
+            if [ "$ENV_HEALTH" == "Severe" ]; then
+              echo ""
+              echo "❌ ERROR: Environment health is Severe!"
+              
+              # Get instance health for debugging
+              echo "Instance health details:"
+              aws elasticbeanstalk describe-instances-health \
+                --environment-name "${{ steps.deployment.outputs.eb_env }}" \
+                --region us-east-1 \
+                --attribute-names All \
+                --output table || echo "Could not retrieve instance health"
+              
+              exit 1
+            fi
+            
+            sleep $interval
+            elapsed=$((elapsed + interval))
+          done
+          
+          if [ $elapsed -ge $timeout ]; then
+            echo ""
+            echo "⚠️  WARNING: Timeout waiting for deployment to complete"
+            echo "The deployment might still be in progress. Check AWS Console for details."
+          fi
+
+      - name: Post-deployment Verification
+        run: |
+          echo "🔍 Running post-deployment verification..."
+          echo "========================================="
+          
+          # Get final environment details
+          ENV_DETAILS=$(aws elasticbeanstalk describe-environments \
+            --environment-names "${{ steps.deployment.outputs.eb_env }}" \
+            --application-name "${{ secrets.EB_APPLICATION_NAME }}" \
+            --region us-east-1 \
+            --query "Environments[0]" \
+            --output json)
+          
+          ENV_URL=$(echo "$ENV_DETAILS" | jq -r '.CNAME // .EndpointURL // ""')
+          VERSION_LABEL=$(echo "$ENV_DETAILS" | jq -r '.VersionLabel // "Unknown"')
+          PLATFORM=$(echo "$ENV_DETAILS" | jq -r '.PlatformArn' | awk -F'/' '{print $NF}')
+          
+          echo "📋 Deployment Summary:"
+          echo "  - Environment: ${{ steps.deployment.outputs.eb_env }}"
+          echo "  - Version: $VERSION_LABEL"
+          echo "  - Platform: $PLATFORM"
+          echo "  - URL: http://$ENV_URL"
+          
+          # Save URL for later use
+          echo "app_url=http://$ENV_URL" >> $GITHUB_OUTPUT
+
+      - name: Application Health Check
+        id: health_check
+        run: |
+          echo "🏥 Running application health checks..."
+          echo "======================================"
+          
+          APP_URL="${{ steps.deployment.outputs.app_url || 'http://FortressFromTheBack-env.eba-sutmczbk.us-east-1.elasticbeanstalk.com' }}"
+          
+          # Wait for application to stabilize
+          echo "⏳ Waiting 30 seconds for application to stabilize..."
+          sleep 30
+          
+          # Check root endpoint
+          echo ""
+          echo "🔍 Checking root endpoint..."
+          ROOT_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$APP_URL" --max-time 10 || echo "000")
+          echo "  Response code: $ROOT_RESPONSE"
+          
+          if [ "$ROOT_RESPONSE" == "200" ] || [ "$ROOT_RESPONSE" == "301" ] || [ "$ROOT_RESPONSE" == "302" ]; then
+            echo "  ✅ Root endpoint is responding"
+          else
+            echo "  ⚠️  Root endpoint returned unexpected status: $ROOT_RESPONSE"
+          fi
+          
+          # Check health endpoint if it exists
+          echo ""
+          echo "🔍 Checking /health endpoint..."
+          HEALTH_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$APP_URL/health" --max-time 10 || echo "000")
+          echo "  Response code: $HEALTH_RESPONSE"
+          
+          if [ "$HEALTH_RESPONSE" == "200" ]; then
+            echo "  ✅ Health endpoint is working"
+            HEALTH_BODY=$(curl -s "$APP_URL/health" --max-time 10 || echo "{}")
+            echo "  Response: $HEALTH_BODY"
+          elif [ "$HEALTH_RESPONSE" == "404" ]; then
+            echo "  ℹ️  No /health endpoint found (this is okay if not implemented)"
+          else
+            echo "  ⚠️  Health endpoint returned unexpected status: $HEALTH_RESPONSE"
+          fi
+          
+          # Overall health check result
+          echo ""
+          if [ "$ROOT_RESPONSE" == "200" ] || [ "$ROOT_RESPONSE" == "301" ] || [ "$ROOT_RESPONSE" == "302" ] || [ "$HEALTH_RESPONSE" == "200" ]; then
+            echo "✅ Application is accessible and responding"
+            echo "health_check_passed=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️  WARNING: Application might not be fully accessible"
+            echo "health_check_passed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo ""
+          echo "========================================"
+          echo "📊 DEPLOYMENT SUMMARY"
+          echo "========================================"
+          echo "🎯 Target: ${{ steps.deployment.outputs.target_env }}"
+          echo "🌍 Environment: ${{ steps.deployment.outputs.eb_env }}"
+          echo "📦 Application: ${{ secrets.EB_APPLICATION_NAME }}"
+          echo "🔧 NODE_ENV: ${{ steps.deployment.outputs.node_env }}"
+          echo ""
+          
+          if [ "${{ steps.deploy.outputs.deploy_success }}" == "true" ]; then
+            echo "✅ Deployment Status: SUCCESS"
+          else
+            echo "❌ Deployment Status: FAILED"
+          fi
+          
+          if [ "${{ steps.health_check.outputs.health_check_passed }}" == "true" ]; then
+            echo "✅ Health Check: PASSED"
+          else
+            echo "⚠️  Health Check: WARNING"
+          fi
+          
+          echo ""
+          echo "🌐 Application URL: ${{ steps.deployment.outputs.app_url || 'http://FortressFromTheBack-env.eba-sutmczbk.us-east-1.elasticbeanstalk.com' }}"
+          echo ""
+          echo "📝 For more details, check:"
+          echo "   - AWS Console: https://console.aws.amazon.com/elasticbeanstalk"
+          echo "   - CloudWatch Logs: https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#logs:"
+          echo "========================================"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "🧹 Cleaning up temporary files..."
+          
+          # Remove the temporary EB config
+          if [ -f .elasticbeanstalk/config.yml ]; then
+            rm -f .elasticbeanstalk/config.yml
+            echo "✅ Removed temporary EB config"
+          fi
+          
+          # Remove deployment log
+          if [ -f deploy.log ]; then
+            rm -f deploy.log
+            echo "✅ Removed deployment log"
+          fi
+          
+          echo "✅ Cleanup complete"
