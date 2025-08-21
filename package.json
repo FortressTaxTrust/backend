@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "echo 'No tests specified - skipping'",
     "build": "echo 'No build step required'",
     "postinstall": "echo 'Dependencies installed successfully'"
   },
