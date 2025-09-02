@@ -1,166 +1,157 @@
+// middleware/auth.js
 import jwt from 'jsonwebtoken';
 import jwksClient from 'jwks-rsa';
 import dotenv from 'dotenv';
 
-// Load environment variables
 dotenv.config();
 
-// Configuration - hardcoded to avoid environment variable issues
-const AWS_REGION = 'us-east-1';
-const USER_POOL_ID = 'us-east-1_ad1psldfI';
-const CLIENT_ID = 'cabkj0egcqag1v4f9siu3j6gh';
+/**
+ * If you prefer envs, set:
+ *   AWS_REGION, COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID
+ * For now, keep your hardcoded fallbacks.
+ */
+const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
+const USER_POOL_ID = process.env.COGNITO_USER_POOL_ID || 'us-east-1_ad1psldfI';
+const CLIENT_ID = process.env.COGNITO_CLIENT_ID || 'cabkj0egcqag1v4f9siu3j6gh';
+
+// Accept only access tokens by default (recommended for APIs).
+// Flip to true if you need to allow ID tokens (e.g., for very specific endpoints).
+const ALLOW_ID_TOKENS = false;
+
+const ISSUER = `https://cognito-idp.${AWS_REGION}.amazonaws.com/${USER_POOL_ID}`;
+const JWKS_URI = `${ISSUER}/.well-known/jwks.json`;
 
 console.log('Auth Middleware Configuration:', {
   AWS_REGION,
   USER_POOL_ID,
   CLIENT_ID,
-  jwksUri: `https://cognito-idp.${AWS_REGION}.amazonaws.com/${USER_POOL_ID}/.well-known/jwks.json`
+  issuer: ISSUER,
+  jwksUri: JWKS_URI,
+  allowIdTokens: ALLOW_ID_TOKENS
 });
 
-// Initialize JWKS client with caching
+// ----- JWKS client with caching -----
 const client = jwksClient({
-  jwksUri: `https://cognito-idp.${AWS_REGION}.amazonaws.com/${USER_POOL_ID}/.well-known/jwks.json`,
+  jwksUri: JWKS_URI,
   cache: true,
+  cacheMaxAge: 24 * 60 * 60 * 1000, // 24h
   rateLimit: true,
-  jwksRequestsPerMinute: 5,
-  cacheMaxAge: 24 * 60 * 60 * 1000 // 24 hours
+  jwksRequestsPerMinute: 5
 });
 
-// Cache for signing keys
 const keyCache = new Map();
 
-// Function to get signing key with caching
 const getSigningKey = async (kid) => {
-  // Check cache first
+  if (!kid) throw new Error('Missing kid in token header');
+
   if (keyCache.has(kid)) {
-    console.log('Using cached signing key for kid:', kid);
+    // console.log('Using cached signing key for kid:', kid);
     return keyCache.get(kid);
   }
-
-  try {
-    const key = await new Promise((resolve, reject) => {
-      client.getSigningKey(kid, (err, key) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolve(key);
-      });
-    });
-
-    const signingKey = key.getPublicKey();
-    // Cache the key
-    keyCache.set(kid, signingKey);
-    console.log('Cached new signing key for kid:', kid);
-    return signingKey;
-  } catch (error) {
-    console.error('Error fetching signing key:', error);
-    throw new Error('Failed to get signing key');
-  }
+  const key = await new Promise((resolve, reject) => {
+    client.getSigningKey(kid, (err, k) => (err ? reject(err) : resolve(k)));
+  });
+  const signingKey = key.getPublicKey();
+  keyCache.set(kid, signingKey);
+  return signingKey;
 };
 
-// Token validation function
-const validateToken = (token, signingKey) => {
+const verifyAndDecode = (token, signingKey) => {
+  // Add small clock tolerance for minor clock skew
   const options = {
     algorithms: ['RS256'],
-    issuer: `https://cognito-idp.${AWS_REGION}.amazonaws.com/${USER_POOL_ID}`,
-    // Remove audience validation as Cognito tokens may have different audiences
-    ignoreExpiration: false
+    issuer: ISSUER,
+    ignoreExpiration: false,
+    clockTolerance: 60 // seconds
   };
+  return jwt.verify(token, signingKey, options);
+};
 
-  try {
-    console.log('Validating token with options:', {
-      issuer: options.issuer,
-      algorithms: options.algorithms
-    });
-    
-    const decoded = jwt.verify(token, signingKey, options);
-    console.log('Token decoded successfully:', {
-      sub: decoded.sub,
-      email: decoded.email,
-      given_name: decoded.given_name,
-      family_name: decoded.family_name,
-      scope: decoded.scope
-    });
-    return decoded;
-  } catch (error) {
-    console.error('Token validation error:', {
-      name: error.name,
-      message: error.message,
-      stack: error.stack
-    });
-    
-    if (error.name === 'TokenExpiredError') {
-      throw new Error('Token has expired');
-    }
-    if (error.name === 'JsonWebTokenError') {
-      throw new Error('Invalid token');
-    }
-    throw error;
+// Extra safety: make sure this came from your app client and is the right token type.
+const assertCognitoClaims = (decoded) => {
+  // Cognito sets "token_use" => "access" or "id"
+  const tokenUse = decoded.token_use;
+  if (tokenUse !== 'access' && tokenUse !== 'id') {
+    throw new Error('Invalid token_use claim');
   }
+
+  if (!ALLOW_ID_TOKENS && tokenUse !== 'access') {
+    throw new Error('Only access tokens are allowed');
+  }
+
+  // For access tokens, "client_id" must match your app client
+  if (tokenUse === 'access') {
+    if (decoded.client_id !== CLIENT_ID) {
+      throw new Error('Invalid client_id for access token');
+    }
+  }
+
+  // For ID tokens (if allowed), "aud" must match your app client
+  if (tokenUse === 'id') {
+    if (decoded.aud !== CLIENT_ID) {
+      throw new Error('Invalid audience for ID token');
+    }
+  }
+
+  // Optional: enforce scopes for resource servers (if you use them)
+  // Example: require "api/read" scope
+  // if (tokenUse === 'access') {
+  //   const scopes = (decoded.scope || '').split(' ');
+  //   if (!scopes.includes('api/read')) {
+  //     throw new Error('Insufficient scope');
+  //   }
+  // }
 };
 
 export const authenticateToken = async (req, res, next) => {
-  console.log('\n=== Starting Token Verification ===');
-  
-  // Get token from Authorization header
-  const authHeader = req.headers['authorization'];
-  if (!authHeader?.startsWith('Bearer ')) {
-    return res.status(401).json({ 
-      error: 'Unauthorized',
-      message: 'No valid authorization header'
-    });
-  }
-
-  const token = authHeader.split(' ')[1];
-  if (!token) {
-    return res.status(401).json({ 
-      error: 'Unauthorized',
-      message: 'No token provided'
-    });
-  }
-
   try {
-    // Decode token without verification
-    const decodedToken = jwt.decode(token, { complete: true });
-    if (!decodedToken?.header?.kid) {
-      throw new Error('Invalid token format');
+    // Supports "Authorization: Bearer <token>"
+    const authHeader = req.headers.authorization || req.headers.Authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized', message: 'Missing Bearer token' });
     }
 
-    // Get signing key
-    const signingKey = await getSigningKey(decodedToken.header.kid);
+    const token = authHeader.slice('Bearer '.length).trim();
+    if (!token) {
+      return res.status(401).json({ error: 'Unauthorized', message: 'No token provided' });
+    }
 
-    // Validate token
-    const decoded = validateToken(token, signingKey);
+    const decodedHeader = jwt.decode(token, { complete: true });
+    if (!decodedHeader?.header?.kid) {
+      return res.status(403).json({ error: 'Authentication failed', message: 'Invalid token header' });
+    }
 
-    // Extract user information from the token
+    const signingKey = await getSigningKey(decodedHeader.header.kid);
+    const decoded = verifyAndDecode(token, signingKey);
+
+    // Enforce Cognito-specific claims
+    assertCognitoClaims(decoded);
+
+    // Attach useful fields
     req.user = {
       sub: decoded.sub,
-      email: decoded.email,
       username: decoded['cognito:username'] || decoded.username,
+      email: decoded.email,
+      email_verified: decoded.email_verified,
       given_name: decoded.given_name,
       family_name: decoded.family_name,
       groups: decoded['cognito:groups'] || [],
       scope: decoded.scope,
-      email_verified: decoded.email_verified,
-      phone_number: decoded.phone_number,
-      phone_number_verified: decoded.phone_number_verified
+      token_use: decoded.token_use
     };
 
-    console.log('Token verified successfully for user:', {
-      sub: req.user.sub,
-      email: req.user.email,
-      given_name: req.user.given_name,
-      family_name: req.user.family_name
-    });
-    next();
+    return next();
   } catch (error) {
-    console.error('Token verification failed:', error);
-    
-    const statusCode = error.message === 'Token has expired' ? 401 : 403;
-    return res.status(statusCode).json({
-      error: 'Authentication failed',
-      message: error.message
-    });
+    // Map common JWT errors to cleaner messages
+    const name = error?.name || '';
+    const message = error?.message || 'Token verification failed';
+
+    if (name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Authentication failed', message: 'Token has expired' });
+    }
+    if (name === 'JsonWebTokenError' || name === 'NotBeforeError') {
+      return res.status(403).json({ error: 'Authentication failed', message });
+    }
+    return res.status(403).json({ error: 'Authentication failed', message });
   }
-}; 
+};

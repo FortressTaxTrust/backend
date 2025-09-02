@@ -1,105 +1,109 @@
+// routes/auth.js
 import express from 'express';
-import { 
-  CognitoIdentityProviderClient, 
-  InitiateAuthCommand,
-  SignUpCommand,
-  ConfirmSignUpCommand,
-  ForgotPasswordCommand,
-  ConfirmForgotPasswordCommand,
-  AssociateSoftwareTokenCommand,
-  VerifySoftwareTokenCommand,
-  SetUserMFAPreferenceCommand,
-  RespondToAuthChallengeCommand,
-  GetUserCommand
-} from '@aws-sdk/client-cognito-identity-provider';
 import QRCode from 'qrcode';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
+import {
+  CognitoIdentityProviderClient,
+  SignUpCommand,
+  ConfirmSignUpCommand,
+  InitiateAuthCommand,
+  RespondToAuthChallengeCommand,
+  AssociateSoftwareTokenCommand,
+  VerifySoftwareTokenCommand,
+  SetUserMFAPreferenceCommand,
+  GetUserCommand,
+  ForgotPasswordCommand,
+  ConfirmForgotPasswordCommand,
+  GlobalSignOutCommand
+} from '@aws-sdk/client-cognito-identity-provider';
 
-// Load environment variables
 dotenv.config();
 
 const router = express.Router();
 
-// Initialize Cognito client with environment variables
-const cognitoClient = new CognitoIdentityProviderClient({
-  region: process.env.NEXT_PUBLIC_AWS_REGION,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-  }
-});
-
-// Log configuration (without sensitive data)
-console.log('Cognito Configuration:', {
-  region: process.env.NEXT_PUBLIC_AWS_REGION,
-  userPoolId: process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID,
-  clientId: process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID,
-  hasClientSecret: true
-});
-
-// Cognito configuration from environment variables
+// ---- Config ----
 const COGNITO_CONFIG = {
-  UserPoolId: process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID,
-  ClientId: process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID,
-  ClientSecret: process.env.NEXT_PUBLIC_COGNITO_CLIENT_SECRET
+  region: process.env.NEXT_PUBLIC_AWS_REGION,
+  userPoolId: process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID, // not required for these routes but kept for reference
+  clientId: process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID,
+  clientSecret: process.env.NEXT_PUBLIC_COGNITO_CLIENT_SECRET || null
 };
 
-// Function to calculate SecretHash
-const calculateSecretHash = (username) => {
-  const message = username + COGNITO_CONFIG.ClientId;
-  const hmac = crypto.createHmac('sha256', COGNITO_CONFIG.ClientSecret);
-  hmac.update(message);
+const cognitoClient = new CognitoIdentityProviderClient({
+  region: COGNITO_CONFIG.region,
+  // If running on AWS with an instance role, you can remove credentials below.
+  credentials: (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY)
+    ? {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+      }
+    : undefined
+});
+
+// Minimal, safe config log
+console.log('Cognito:', {
+  region: COGNITO_CONFIG.region,
+  userPoolId: COGNITO_CONFIG.userPoolId,
+  clientId: COGNITO_CONFIG.clientId,
+  hasClientSecret: !!COGNITO_CONFIG.clientSecret
+});
+
+// ---- Helpers ----
+function calculateSecretHash(username) {
+  if (!COGNITO_CONFIG.clientSecret) return undefined;
+  const hmac = crypto.createHmac('sha256', COGNITO_CONFIG.clientSecret);
+  hmac.update(username + COGNITO_CONFIG.clientId);
   return hmac.digest('base64');
-};
+}
 
-// Login route with Cognito USER_PASSWORD_AUTH flow and MFA handling
+function maskTokens(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const clone = JSON.parse(JSON.stringify(obj));
+  const mask = v => (typeof v === 'string' && v.length > 12 ? v.slice(0, 6) + '…(masked)' : v);
+  if (clone.AuthenticationResult) {
+    ['AccessToken','IdToken','RefreshToken'].forEach(k => {
+      if (clone.AuthenticationResult[k]) clone.AuthenticationResult[k] = mask(clone.AuthenticationResult[k]);
+    });
+  }
+  return clone;
+}
+
+// ===================== AUTH =====================
+
+// Login (USER_PASSWORD_AUTH) + challenge routing
 router.post('/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
-
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
-    }
-
-    console.log('Attempting login for user:', username); // Debug log
+    const { username, password } = req.body || {};
+    if (!username || !password) return res.status(400).json({ error: 'Username and password are required' });
 
     const params = {
       AuthFlow: 'USER_PASSWORD_AUTH',
-      ClientId: COGNITO_CONFIG.ClientId,
-      AuthParameters: {
-        USERNAME: username,
-        PASSWORD: password,
-        SECRET_HASH: calculateSecretHash(username)
-      }
+      ClientId: COGNITO_CONFIG.clientId,
+      AuthParameters: { USERNAME: username, PASSWORD: password }
     };
+    const secretHash = calculateSecretHash(username);
+    if (secretHash) params.AuthParameters.SECRET_HASH = secretHash;
 
-    console.log('Auth parameters:', { ...params, AuthParameters: { ...params.AuthParameters, PASSWORD: '***' } }); // Debug log
-
-    const command = new InitiateAuthCommand(params);
-    const response = await cognitoClient.send(command);
-
-    console.log('Auth response:', response); // Debug log
-
-    // Handle MFA challenge if required
-    if (response.ChallengeName === 'MFA_SETUP') {
-      return res.json({
-        status: 'MFA_SETUP_REQUIRED',
-        session: response.Session,
-        challengeName: response.ChallengeName
-      });
+    const response = await cognitoClient.send(new InitiateAuthCommand(params));
+    // Handle common challenges
+    switch (response.ChallengeName) {
+      case 'MFA_SETUP':
+        return res.json({ status: 'MFA_SETUP_REQUIRED', session: response.Session, challengeName: 'MFA_SETUP' });
+      case 'SOFTWARE_TOKEN_MFA':
+        return res.json({ status: 'TOTP_MFA_REQUIRED', session: response.Session, challengeName: 'SOFTWARE_TOKEN_MFA' });
+      case 'SMS_MFA':
+        return res.json({ status: 'SMS_MFA_REQUIRED', session: response.Session, challengeName: 'SMS_MFA' });
+      case 'NEW_PASSWORD_REQUIRED':
+        return res.json({ status: 'NEW_PASSWORD_REQUIRED', session: response.Session, challengeName: 'NEW_PASSWORD_REQUIRED' });
+      case 'PASSWORD_RESET_REQUIRED':
+        return res.json({ status: 'PASSWORD_RESET_REQUIRED', session: response.Session, challengeName: 'PASSWORD_RESET_REQUIRED' });
+      default:
+        break;
     }
 
-    // Handle TOTP MFA challenge
-    if (response.ChallengeName === 'SOFTWARE_TOKEN_MFA') {
-      return res.json({
-        status: 'TOTP_MFA_REQUIRED',
-        session: response.Session,
-        challengeName: response.ChallengeName
-      });
-    }
-
-    res.json({
+    // Success (no further challenge)
+    return res.json({
       status: 'success',
       message: 'Login successful',
       tokens: {
@@ -110,372 +114,443 @@ router.post('/login', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Login error details:', {
-      name: error.name,
-      message: error.message,
-      code: error.code,
-      stack: error.stack
-    });
-    
-    // Handle specific Cognito errors
+    console.error('Login error:', { name: error.name, message: error.message });
     if (error.name === 'NotAuthorizedException') {
-      return res.status(401).json({
-        status: 'error',
-        message: 'Incorrect username or password',
-        error: error.message
-      });
+      return res.status(401).json({ status: 'error', message: 'Incorrect username or password' });
     }
-    
     if (error.name === 'UserNotFoundException') {
-      return res.status(404).json({
-        status: 'error',
-        message: 'User not found',
-        error: error.message
-      });
+      return res.status(404).json({ status: 'error', message: 'User not found' });
     }
-
     if (error.name === 'UserNotConfirmedException') {
-      return res.status(400).json({
-        status: 'error',
-        message: 'User is not confirmed',
-        error: error.message
-      });
+      return res.status(400).json({ status: 'error', message: 'User is not confirmed' });
     }
-
-    res.status(500).json({
-      status: 'error',
-      message: 'Login failed',
-      error: error.message,
-      errorType: error.name
-    });
+    return res.status(500).json({ status: 'error', message: 'Login failed', error: error.message, errorType: error.name });
   }
 });
 
-// Setup Authenticator app MFA
-router.post('/setup-authenticator', async (req, res) => {
-  try {
-    const { accessToken } = req.body;
-
-    if (!accessToken) {
-      return res.status(400).json({ error: 'Access token is required' });
-    }
-
-    // Get the secret code from Cognito
-    const params = {
-      AccessToken: accessToken
-    };
-
-    const command = new AssociateSoftwareTokenCommand(params);
-    const response = await cognitoClient.send(command);
-
-    // Generate QR code for the authenticator app
-    const issuer = 'Your App Name'; // Replace with your app name
-    const accountName = req.body.email || 'user@example.com';
-    const otpauth = `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(accountName)}?secret=${response.SecretCode}&issuer=${encodeURIComponent(issuer)}`;
-    
-    const qrCode = await QRCode.toDataURL(otpauth);
-
-    res.json({
-      status: 'success',
-      secretCode: response.SecretCode,
-      session: response.Session,
-      qrCode: qrCode
-    });
-  } catch (error) {
-    console.error('Authenticator setup error:', error);
-    res.status(400).json({
-      status: 'error',
-      message: 'Failed to setup authenticator',
-      error: error.message
-    });
-  }
-});
-
-// Verify Authenticator setup
-router.post('/verify-authenticator', async (req, res) => {
-  try {
-    const { accessToken, userCode, session } = req.body;
-
-    if (!accessToken || !userCode) {
-      return res.status(400).json({ error: 'Access token and authenticator code are required' });
-    }
-
-    const params = {
-      AccessToken: accessToken,
-      UserCode: userCode,
-      Session: session
-    };
-
-    const command = new VerifySoftwareTokenCommand(params);
-    const response = await cognitoClient.send(command);
-
-    if (response.Status === 'SUCCESS') {
-      // Set MFA preference to TOTP
-      await cognitoClient.send(new SetUserMFAPreferenceCommand({
-        AccessToken: accessToken,
-        SoftwareTokenMfaSettings: {
-          Enabled: true,
-          PreferredMfa: true
-        }
-      }));
-    }
-
-    res.json({
-      status: response.Status,
-      session: response.Session
-    });
-  } catch (error) {
-    console.error('Authenticator verification error:', error);
-    res.status(400).json({
-      status: 'error',
-      message: 'Failed to verify authenticator code',
-      error: error.message
-    });
-  }
-});
-
-// Respond to Authenticator MFA challenge
+// Respond to MFA (TOTP or SMS) after /login
 router.post('/respond-to-mfa', async (req, res) => {
   try {
-    const { session, code, username } = req.body;
+    const { session, code, username, challengeName } = req.body || {};
+    if (!session || !code || !username) return res.status(400).json({ error: 'Session, code, and username are required' });
 
-    if (!session || !code || !username) {
+    const name = challengeName || 'SOFTWARE_TOKEN_MFA';
+    const challengeResponses = { USERNAME: username };
+    if (name === 'SOFTWARE_TOKEN_MFA') challengeResponses.SOFTWARE_TOKEN_MFA_CODE = code;
+    if (name === 'SMS_MFA') challengeResponses.SMS_MFA_CODE = code;
+
+    const secretHash = calculateSecretHash(username);
+    if (secretHash) challengeResponses.SECRET_HASH = secretHash;
+
+    const resp = await cognitoClient.send(new RespondToAuthChallengeCommand({
+      ClientId: COGNITO_CONFIG.clientId,
+      ChallengeName: name,
+      Session: session,
+      ChallengeResponses: challengeResponses
+    }));
+
+    return res.json({
+      status: 'success',
+      tokens: {
+        accessToken: resp.AuthenticationResult.AccessToken,
+        idToken: resp.AuthenticationResult.IdToken,
+        refreshToken: resp.AuthenticationResult.RefreshToken,
+        expiresIn: resp.AuthenticationResult.ExpiresIn
+      }
+    });
+  } catch (error) {
+    console.error('MFA respond error:', { name: error.name, message: error.message });
+    return res.status(400).json({ status: 'error', message: 'Failed to verify MFA code', error: error.message });
+  }
+});
+
+// NEW_PASSWORD_REQUIRED
+router.post('/respond-new-password', async (req, res) => {
+try {
+const { session, username, newPassword, givenName, familyName, email } = req.body || {};
+if (!session || !username || !newPassword) return res.status(400).json({ error: 'Session, username, and newPassword are required' });
+
+const challengeResponses = { USERNAME: username, NEW_PASSWORD: newPassword };
+
+// Add required attributes if provided (but skip email if user already has one)
+if (givenName) challengeResponses['userAttributes.given_name'] = givenName;
+if (familyName) challengeResponses['userAttributes.family_name'] = familyName;
+// Note: Don't send email if user already has one - it causes "Cannot modify an already provided email" error
+// if (email) challengeResponses['userAttributes.email'] = email;
+
+const secretHash = calculateSecretHash(username);
+if (secretHash) challengeResponses.SECRET_HASH = secretHash;
+
+const r = await cognitoClient.send(new RespondToAuthChallengeCommand({
+ClientId: COGNITO_CONFIG.clientId,
+ChallengeName: 'NEW_PASSWORD_REQUIRED',
+Session: session,
+ChallengeResponses: challengeResponses
+}));
+
+// Check if we got tokens or if there are more challenges
+if (r.AuthenticationResult) {
+// Success - we have tokens
+return res.json({
+  status: 'success',
+  message: 'Password changed successfully',
+  tokens: {
+    accessToken: r.AuthenticationResult.AccessToken,
+    idToken: r.AuthenticationResult.IdToken,
+    refreshToken: r.AuthenticationResult.RefreshToken,
+    expiresIn: r.AuthenticationResult.ExpiresIn
+  }
+});
+} else if (r.ChallengeName) {
+// There are more challenges to complete
+return res.json({
+  status: 'challenge_required',
+  message: 'Additional challenge required',
+  challengeName: r.ChallengeName,
+  session: r.Session,
+  username: username
+});
+} else {
+// Password changed but no tokens (user needs to login again)
+return res.json({
+  status: 'success',
+  message: 'Password changed successfully. Please login with your new password.',
+  note: 'No tokens returned - this is normal for NEW_PASSWORD_REQUIRED challenges'
+});
+}
+} catch (error) {
+console.error('NEW_PASSWORD_REQUIRED error:', { name: error.name, message: error.message });
+return res.status(400).json({ status: 'error', message: 'Failed to set new password', error: error.message });
+}
+});
+
+// ===================== TOTP SETUP (FIRST LOGIN: CHALLENGE PATH) =====================
+
+// Step 1: Associate software token using Session
+router.post('/setup-authenticator-challenge', async (req, res) => {
+  try {
+    const { session, username } = req.body || {};
+    if (!session || !username) return res.status(400).json({ error: 'Session and username are required' });
+
+    const assoc = await cognitoClient.send(new AssociateSoftwareTokenCommand({ Session: session }));
+
+    const issuer = 'Your App Name'; // change to your app/brand
+    const accountName = encodeURIComponent(username);
+    const otpauth = `otpauth://totp/${encodeURIComponent(issuer)}:${accountName}?secret=${assoc.SecretCode}&issuer=${encodeURIComponent(issuer)}`;
+    const qrCode = await QRCode.toDataURL(otpauth);
+
+    return res.json({ status: 'success', secretCode: assoc.SecretCode, session: assoc.Session, qrCode });
+  } catch (error) {
+    console.error('setup-authenticator-challenge error:', { name: error.name, message: error.message });
+    return res.status(400).json({ status: 'error', message: 'Failed to setup authenticator (challenge path)', error: error.message });
+  }
+});
+
+// Step 2: Verify user TOTP using Session, then COMPLETE MFA_SETUP to get tokens
+router.post('/verify-authenticator-challenge', async (req, res) => {
+  try {
+    const { session, userCode, username } = req.body || {};
+    if (!session || !userCode || !username) {
       return res.status(400).json({ error: 'Session, authenticator code, and username are required' });
     }
 
-    const params = {
-      ChallengeName: 'SOFTWARE_TOKEN_MFA',
-      ClientId: COGNITO_CONFIG.ClientId,
-      Session: session,
-      ChallengeResponses: {
-        USERNAME: username,
-        SOFTWARE_TOKEN_MFA_CODE: code,
-        SECRET_HASH: calculateSecretHash(username)
-      }
-    };
+    const verify = await cognitoClient.send(new VerifySoftwareTokenCommand({ Session: session, UserCode: userCode }));
+    if (verify.Status !== 'SUCCESS') {
+      return res.status(400).json({ status: verify.Status || 'FAILED' });
+    }
 
-    const command = new RespondToAuthChallengeCommand(params);
-    const response = await cognitoClient.send(command);
+    const challengeResponses = { USERNAME: username };
+    const secretHash = calculateSecretHash(username);
+    if (secretHash) challengeResponses.SECRET_HASH = secretHash;
 
-    res.json({
+    const complete = await cognitoClient.send(new RespondToAuthChallengeCommand({
+      ClientId: COGNITO_CONFIG.clientId,
+      ChallengeName: 'MFA_SETUP',
+      Session: verify.Session,
+      ChallengeResponses: challengeResponses
+    }));
+
+    return res.json({
       status: 'success',
       tokens: {
-        accessToken: response.AuthenticationResult.AccessToken,
-        idToken: response.AuthenticationResult.IdToken,
-        refreshToken: response.AuthenticationResult.RefreshToken,
-        expiresIn: response.AuthenticationResult.ExpiresIn
+        accessToken: complete.AuthenticationResult.AccessToken,
+        idToken: complete.AuthenticationResult.IdToken,
+        refreshToken: complete.AuthenticationResult.RefreshToken,
+        expiresIn: complete.AuthenticationResult.ExpiresIn
       }
     });
   } catch (error) {
-    console.error('MFA challenge response error:', error);
-    res.status(400).json({
-      status: 'error',
-      message: 'Failed to verify authenticator code',
-      error: error.message
-    });
+    console.error('verify-authenticator-challenge error:', { name: error.name, message: error.message });
+    return res.status(400).json({ status: 'error', message: 'Failed to verify authenticator (challenge path)', error: error.message });
   }
 });
 
-// Get user MFA preferences
+// ===================== TOTP SETUP (LOGGED-IN: ACCESSTOKEN PATH) =====================
+
+router.post('/setup-authenticator', async (req, res) => {
+  try {
+    const { accessToken, accountLabel } = req.body || {};
+    if (!accessToken) return res.status(400).json({ error: 'Access token is required' });
+
+    const assoc = await cognitoClient.send(new AssociateSoftwareTokenCommand({ AccessToken: accessToken }));
+
+    const issuer = 'Your App Name';
+    const accountName = accountLabel || 'user';
+    const otpauth = `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(accountName)}?secret=${assoc.SecretCode}&issuer=${encodeURIComponent(issuer)}`;
+    const qrCode = await QRCode.toDataURL(otpauth);
+
+    return res.json({ status: 'success', secretCode: assoc.SecretCode, session: assoc.Session, qrCode });
+  } catch (error) {
+    console.error('setup-authenticator error:', { name: error.name, message: error.message });
+    return res.status(400).json({ status: 'error', message: 'Failed to setup authenticator', error: error.message });
+  }
+});
+
+router.post('/verify-authenticator', async (req, res) => {
+  try {
+    const { accessToken, userCode, session } = req.body || {};
+    if (!accessToken || !userCode) return res.status(400).json({ error: 'Access token and authenticator code are required' });
+
+    const params = { AccessToken: accessToken, UserCode: userCode };
+    if (session) params.Session = session;
+
+    const verify = await cognitoClient.send(new VerifySoftwareTokenCommand(params));
+
+    if (verify.Status === 'SUCCESS') {
+      await cognitoClient.send(new SetUserMFAPreferenceCommand({
+        AccessToken: accessToken,
+        SoftwareTokenMfaSettings: { Enabled: true, PreferredMfa: true }
+      }));
+    }
+
+    return res.json({ status: verify.Status, session: verify.Session });
+  } catch (error) {
+    console.error('verify-authenticator error:', { name: error.name, message: error.message });
+    return res.status(400).json({ status: 'error', message: 'Failed to verify authenticator code', error: error.message });
+  }
+});
+
+// ===================== PROFILE / UTILS =====================
+
 router.get('/mfa-preferences', async (req, res) => {
   try {
-    const { accessToken } = req.headers;
+    const accessToken =
+      req.headers.accesstoken ||
+      req.headers['access-token'] ||
+      (req.headers.authorization ? req.headers.authorization.replace(/^Bearer\s+/i, '') : null);
+    if (!accessToken) return res.status(400).json({ error: 'Access token is required' });
 
-    if (!accessToken) {
-      return res.status(400).json({ error: 'Access token is required' });
-    }
+    const response = await cognitoClient.send(new GetUserCommand({ AccessToken: accessToken }));
 
-    const params = {
-      AccessToken: accessToken
-    };
-
-    const command = new GetUserCommand(params);
-    const response = await cognitoClient.send(command);
-
-    res.json({
+    return res.json({
       status: 'success',
-      mfaEnabled: response.PreferredMfaSetting === 'SOFTWARE_TOKEN_MFA',
-      mfaType: response.PreferredMfaSetting
+      preferredMfa: response.PreferredMfaSetting || null,
+      availableMfas: response.UserMFASettingList || []
     });
   } catch (error) {
-    console.error('Get MFA preferences error:', error);
-    res.status(400).json({
-      status: 'error',
-      message: 'Failed to get MFA preferences',
-      error: error.message
-    });
+    console.error('mfa-preferences error:', { name: error.name, message: error.message });
+    return res.status(400).json({ status: 'error', message: 'Failed to get MFA preferences', error: error.message });
   }
 });
 
-// Sign up route with Cognito user attributes
+// ===================== SIGNUP / CONFIRM =====================
+
 router.post('/signup', async (req, res) => {
   try {
-    const { username, password, email } = req.body;
-
-    if (!username || !password || !email) {
-      return res.status(400).json({ error: 'Username, password, and email are required' });
-    }
-
-    // Cognito password requirements validation
-    if (password.length < 8) {
-      return res.status(400).json({ error: 'Password must be at least 8 characters long' });
-    }
+    const { username, password, email } = req.body || {};
+    if (!username || !password || !email) return res.status(400).json({ error: 'Username, password, and email are required' });
 
     const params = {
-      ClientId: COGNITO_CONFIG.ClientId,
+      ClientId: COGNITO_CONFIG.clientId,
       Username: username,
       Password: password,
-      SecretHash: calculateSecretHash(username),
-      UserAttributes: [
-        {
-          Name: 'email',
-          Value: email
-        }
-      ],
-      ValidationData: [
-        {
-          Name: 'email',
-          Value: email
-        }
-      ]
+      UserAttributes: [{ Name: 'email', Value: email }],
+      ValidationData: [{ Name: 'email', Value: email }]
     };
+    const secretHash = calculateSecretHash(username);
+    if (secretHash) params.SecretHash = secretHash;
 
-    const command = new SignUpCommand(params);
-    const response = await cognitoClient.send(command);
-
-    res.json({
+    const r = await cognitoClient.send(new SignUpCommand(params));
+    return res.json({
       status: 'success',
       message: 'User registered successfully. Please check your email for verification code.',
-      userSub: response.UserSub,
-      userConfirmed: response.UserConfirmed
+      userSub: r.UserSub,
+      userConfirmed: r.UserConfirmed
     });
   } catch (error) {
-    console.error('Signup error:', error);
-    res.status(400).json({
-      status: 'error',
-      message: 'Signup failed',
-      error: error.message
-    });
+    console.error('Signup error:', { name: error.name, message: error.message });
+    return res.status(400).json({ status: 'error', message: 'Signup failed', error: error.message });
   }
 });
 
-// Confirm signup with Cognito verification code
 router.post('/confirm-signup', async (req, res) => {
   try {
-    const { username, code } = req.body;
-
-    if (!username || !code) {
-      return res.status(400).json({ error: 'Username and verification code are required' });
-    }
+    const { username, code } = req.body || {};
+    if (!username || !code) return res.status(400).json({ error: 'Username and verification code are required' });
 
     const params = {
-      ClientId: COGNITO_CONFIG.ClientId,
+      ClientId: COGNITO_CONFIG.clientId,
       Username: username,
-      ConfirmationCode: code,
-      SecretHash: calculateSecretHash(username)
+      ConfirmationCode: code
     };
+    const secretHash = calculateSecretHash(username);
+    if (secretHash) params.SecretHash = secretHash;
 
-    const command = new ConfirmSignUpCommand(params);
-    await cognitoClient.send(command);
-
-    res.json({
-      status: 'success',
-      message: 'User confirmed successfully'
-    });
+    await cognitoClient.send(new ConfirmSignUpCommand(params));
+    return res.json({ status: 'success', message: 'User confirmed successfully' });
   } catch (error) {
-    console.error('Confirmation error:', error);
-    res.status(400).json({
-      status: 'error',
-      message: 'Confirmation failed',
-      error: error.message
-    });
+    console.error('Confirm signup error:', { name: error.name, message: error.message });
+    return res.status(400).json({ status: 'error', message: 'Confirmation failed', error: error.message });
   }
 });
 
-// Forgot password flow
+// ===================== PASSWORD RESET =====================
+
 router.post('/forgot-password', async (req, res) => {
   try {
-    const { username } = req.body;
+    const { username } = req.body || {};
+    if (!username) return res.status(400).json({ error: 'Username is required' });
 
-    if (!username) {
-      return res.status(400).json({ error: 'Username is required' });
-    }
+    const params = { ClientId: COGNITO_CONFIG.clientId, Username: username };
+    const secretHash = calculateSecretHash(username);
+    if (secretHash) params.SecretHash = secretHash;
 
-    const params = {
-      ClientId: COGNITO_CONFIG.ClientId,
-      Username: username,
-      SecretHash: calculateSecretHash(username)
-    };
-
-    const command = new ForgotPasswordCommand(params);
-    await cognitoClient.send(command);
-
-    res.json({
-      status: 'success',
-      message: 'Verification code sent to your email'
-    });
+    await cognitoClient.send(new ForgotPasswordCommand(params));
+    return res.json({ status: 'success', message: 'Verification code sent to your email' });
   } catch (error) {
-    console.error('Forgot password error:', error);
-    res.status(400).json({
-      status: 'error',
-      message: 'Failed to initiate password reset',
-      error: error.message
-    });
+    console.error('Forgot password error:', { name: error.name, message: error.message });
+    return res.status(400).json({ status: 'error', message: 'Failed to initiate password reset', error: error.message });
   }
 });
 
-// Confirm forgot password
 router.post('/confirm-forgot-password', async (req, res) => {
   try {
-    const { username, code, newPassword } = req.body;
-
+    const { username, code, newPassword } = req.body || {};
     if (!username || !code || !newPassword) {
       return res.status(400).json({ error: 'Username, code, and new password are required' });
     }
 
     const params = {
-      ClientId: COGNITO_CONFIG.ClientId,
+      ClientId: COGNITO_CONFIG.clientId,
       Username: username,
       ConfirmationCode: code,
-      Password: newPassword,
-      SecretHash: calculateSecretHash(username)
+      Password: newPassword
     };
+    const secretHash = calculateSecretHash(username);
+    if (secretHash) params.SecretHash = secretHash;
 
-    const command = new ConfirmForgotPasswordCommand(params);
-    await cognitoClient.send(command);
-
-    res.json({
-      status: 'success',
-      message: 'Password reset successful'
-    });
+    await cognitoClient.send(new ConfirmForgotPasswordCommand(params));
+    return res.json({ status: 'success', message: 'Password reset successful' });
   } catch (error) {
-    console.error('Confirm forgot password error:', error);
-    res.status(400).json({
-      status: 'error',
-      message: 'Failed to reset password',
-      error: error.message
-    });
+    console.error('Confirm forgot password error:', { name: error.name, message: error.message });
+    return res.status(400).json({ status: 'error', message: 'Failed to reset password', error: error.message });
   }
 });
 
-// Protected test route
+// ===================== CHANGE PASSWORD =====================
+
+router.post('/change-password', async (req, res) => {
+  try {
+    const { username, oldPassword, newPassword } = req.body || {};
+    if (!username || !oldPassword || !newPassword) {
+      return res.status(400).json({ error: 'Username, old password, and new password are required' });
+    }
+
+    // First authenticate with old password to get access token
+    const authParams = {
+      AuthFlow: 'USER_PASSWORD_AUTH',
+      ClientId: COGNITO_CONFIG.clientId,
+      AuthParameters: { USERNAME: username, PASSWORD: oldPassword }
+    };
+    const secretHash = calculateSecretHash(username);
+    if (secretHash) authParams.AuthParameters.SECRET_HASH = secretHash;
+
+    const authResponse = await cognitoClient.send(new InitiateAuthCommand(authParams));
+    
+    if (authResponse.ChallengeName) {
+      return res.status(400).json({ 
+        status: 'error', 
+        message: 'Authentication challenge required. Please complete login first.',
+        challengeName: authResponse.ChallengeName 
+      });
+    }
+
+    // If authentication successful, we can proceed with password change
+    // Note: AWS Cognito doesn't have a direct "change password" API for client apps
+    // This would typically require admin privileges or a different approach
+    // For now, we'll return success after verifying the old password
+    
+    return res.json({ 
+      status: 'success', 
+      message: 'Old password verified successfully. Password change would require additional implementation.',
+      note: 'This endpoint verifies the old password but actual password change requires admin privileges or different AWS Cognito setup.'
+    });
+    
+  } catch (error) {
+    console.error('Change password error:', { name: error.name, message: error.message });
+    if (error.name === 'NotAuthorizedException') {
+      return res.status(401).json({ status: 'error', message: 'Incorrect old password' });
+    }
+    if (error.name === 'UserNotFoundException') {
+      return res.status(404).json({ status: 'error', message: 'User not found' });
+    }
+    return res.status(500).json({ status: 'error', message: 'Failed to change password', error: error.message });
+  }
+});
+
+// ===================== REFRESH & SIGNOUT =====================
+
+router.post('/refresh', async (req, res) => {
+  try {
+    const { refreshToken, username } = req.body || {};
+    if (!refreshToken || !username) return res.status(400).json({ error: 'refreshToken and username are required' });
+
+    const params = {
+      AuthFlow: 'REFRESH_TOKEN_AUTH',
+      ClientId: COGNITO_CONFIG.clientId,
+      AuthParameters: { REFRESH_TOKEN: refreshToken }
+    };
+    const secretHash = calculateSecretHash(username);
+    if (secretHash) params.AuthParameters.SECRET_HASH = secretHash;
+
+    const r = await cognitoClient.send(new InitiateAuthCommand(params));
+    return res.json({
+      status: 'success',
+      tokens: {
+        accessToken: r.AuthenticationResult.AccessToken,
+        idToken: r.AuthenticationResult.IdToken,
+        expiresIn: r.AuthenticationResult.ExpiresIn
+      }
+    });
+  } catch (error) {
+    console.error('Refresh error:', { name: error.name, message: error.message });
+    return res.status(400).json({ status: 'error', message: 'Failed to refresh tokens', error: error.message });
+  }
+});
+
+router.post('/signout', async (req, res) => {
+  try {
+    const { accessToken } = req.body || {};
+    if (!accessToken) return res.status(400).json({ error: 'Access token is required' });
+
+    await cognitoClient.send(new GlobalSignOutCommand({ AccessToken: accessToken }));
+    return res.json({ status: 'success', message: 'Signed out globally' });
+  } catch (error) {
+    console.error('Signout error:', { name: error.name, message: error.message });
+    return res.status(400).json({ status: 'error', message: 'Failed to sign out', error: error.message });
+  }
+});
+
+// ===================== PROTECTED TEST =====================
+
 router.get('/protected-route', async (req, res) => {
   try {
-    // The verifyToken middleware will have already validated the token
-    // and attached the user information to req.user
-    res.json({
-      status: 'success',
-      message: 'You have accessed a protected route',
-      user: req.user
-    });
+    // Assumes a verifyToken middleware set req.user
+    return res.json({ status: 'success', message: 'You have accessed a protected route', user: req.user || null });
   } catch (error) {
-    console.error('Protected route error:', error);
-    res.status(500).json({
-      status: 'error',
-      message: 'Error accessing protected route',
-      error: error.message
-    });
+    console.error('Protected route error:', { name: error.name, message: error.message });
+    return res.status(500).json({ status: 'error', message: 'Error accessing protected route', error: error.message });
   }
 });
 
-export default router; 
+export default router;
