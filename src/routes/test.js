@@ -2534,4 +2534,22 @@ router.get('/workdrive-download-file/:fileId', async (req, res) => {
   }
 });
 
+// Simple QR code test endpoint
+router.get('/test-qr', async (req, res) => {
+  try {
+    const QRCode = (await import('qrcode')).default;
+    const testData = 'otpauth://totp/TestApp:testuser?secret=JBSWY3DPEHPK3PXP&issuer=TestApp';
+    const qrCode = await QRCode.toDataURL(testData);
+    
+    res.json({
+      status: 'success',
+      qrCode: qrCode,
+      secretCode: 'JBSWY3DPEHPK3PXP',
+      message: 'QR code generated successfully'
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export const testRouter = router; 
