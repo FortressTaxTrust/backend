@@ -15,7 +15,8 @@ import {
   GetUserCommand,
   ForgotPasswordCommand,
   ConfirmForgotPasswordCommand,
-  GlobalSignOutCommand
+  GlobalSignOutCommand,
+  ChangePasswordCommand
 } from '@aws-sdk/client-cognito-identity-provider';
 
 dotenv.config();
@@ -234,7 +235,7 @@ router.post('/setup-authenticator-challenge', async (req, res) => {
 
     const assoc = await cognitoClient.send(new AssociateSoftwareTokenCommand({ Session: session }));
 
-    const issuer = 'Your App Name'; // change to your app/brand
+    const issuer = 'Fortress-Portal'; // change to your app/brand
     const accountName = encodeURIComponent(username);
     const otpauth = `otpauth://totp/${encodeURIComponent(issuer)}:${accountName}?secret=${assoc.SecretCode}&issuer=${encodeURIComponent(issuer)}`;
     const qrCode = await QRCode.toDataURL(otpauth);
@@ -294,7 +295,7 @@ router.post('/setup-authenticator', async (req, res) => {
 
     const assoc = await cognitoClient.send(new AssociateSoftwareTokenCommand({ AccessToken: accessToken }));
 
-    const issuer = 'Your App Name';
+    const issuer = 'Fortress-Portal';
     const accountName = accountLabel || 'user';
     const otpauth = `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(accountName)}?secret=${assoc.SecretCode}&issuer=${encodeURIComponent(issuer)}`;
     const qrCode = await QRCode.toDataURL(otpauth);
@@ -451,50 +452,112 @@ router.post('/confirm-forgot-password', async (req, res) => {
 
 router.post('/change-password', async (req, res) => {
   try {
-    const { username, oldPassword, newPassword } = req.body || {};
-    if (!username || !oldPassword || !newPassword) {
-      return res.status(400).json({ error: 'Username, old password, and new password are required' });
-    }
-
-    // First authenticate with old password to get access token
-    const authParams = {
-      AuthFlow: 'USER_PASSWORD_AUTH',
-      ClientId: COGNITO_CONFIG.clientId,
-      AuthParameters: { USERNAME: username, PASSWORD: oldPassword }
-    };
-    const secretHash = calculateSecretHash(username);
-    if (secretHash) authParams.AuthParameters.SECRET_HASH = secretHash;
-
-    const authResponse = await cognitoClient.send(new InitiateAuthCommand(authParams));
+    const { accessToken, previousPassword, proposedPassword } = req.body || {};
     
-    if (authResponse.ChallengeName) {
+    if (!accessToken || !proposedPassword) {
       return res.status(400).json({ 
-        status: 'error', 
-        message: 'Authentication challenge required. Please complete login first.',
-        challengeName: authResponse.ChallengeName 
+        error: 'Access token and proposed password are required' 
       });
     }
 
-    // If authentication successful, we can proceed with password change
-    // Note: AWS Cognito doesn't have a direct "change password" API for client apps
-    // This would typically require admin privileges or a different approach
-    // For now, we'll return success after verifying the old password
+    const params = {
+      AccessToken: accessToken,
+      ProposedPassword: proposedPassword
+    };
+
+    // Only include PreviousPassword if provided
+    if (previousPassword) {
+      params.PreviousPassword = previousPassword;
+    }
+
+    await cognitoClient.send(new ChangePasswordCommand(params));
     
     return res.json({ 
       status: 'success', 
-      message: 'Old password verified successfully. Password change would require additional implementation.',
-      note: 'This endpoint verifies the old password but actual password change requires admin privileges or different AWS Cognito setup.'
+      message: 'Password changed successfully' 
     });
     
   } catch (error) {
     console.error('Change password error:', { name: error.name, message: error.message });
+    
     if (error.name === 'NotAuthorizedException') {
-      return res.status(401).json({ status: 'error', message: 'Incorrect old password' });
+      return res.status(401).json({ 
+        status: 'error', 
+        message: 'Invalid access token or previous password' 
+      });
+    }
+    if (error.name === 'InvalidPasswordException') {
+      return res.status(400).json({ 
+        status: 'error', 
+        message: 'New password does not meet requirements' 
+      });
+    }
+    if (error.name === 'PasswordHistoryPolicyViolationException') {
+      return res.status(400).json({ 
+        status: 'error', 
+        message: 'New password matches a previous password' 
+      });
+    }
+    if (error.name === 'PasswordResetRequiredException') {
+      return res.status(400).json({ 
+        status: 'error', 
+        message: 'Password reset is required' 
+      });
     }
     if (error.name === 'UserNotFoundException') {
-      return res.status(404).json({ status: 'error', message: 'User not found' });
+      return res.status(404).json({ 
+        status: 'error', 
+        message: 'User not found' 
+      });
     }
-    return res.status(500).json({ status: 'error', message: 'Failed to change password', error: error.message });
+    if (error.name === 'InvalidParameterException') {
+      return res.status(400).json({ 
+        status: 'error', 
+        message: 'Invalid parameter provided' 
+      });
+    }
+    if (error.name === 'LimitExceededException') {
+      return res.status(400).json({ 
+        status: 'error', 
+        message: 'Too many requests. Please try again later' 
+      });
+    }
+    if (error.name === 'TooManyRequestsException') {
+      return res.status(400).json({ 
+        status: 'error', 
+        message: 'Too many requests. Please try again later' 
+      });
+    }
+    if (error.name === 'UserNotConfirmedException') {
+      return res.status(400).json({ 
+        status: 'error', 
+        message: 'User is not confirmed' 
+      });
+    }
+    if (error.name === 'ForbiddenException') {
+      return res.status(400).json({ 
+        status: 'error', 
+        message: 'Request forbidden' 
+      });
+    }
+    if (error.name === 'InternalErrorException') {
+      return res.status(500).json({ 
+        status: 'error', 
+        message: 'Internal server error' 
+      });
+    }
+    if (error.name === 'ResourceNotFoundException') {
+      return res.status(400).json({ 
+        status: 'error', 
+        message: 'Resource not found' 
+      });
+    }
+    
+    return res.status(500).json({ 
+      status: 'error', 
+      message: 'Failed to change password', 
+      error: error.message 
+    });
   }
 });
 
@@ -550,6 +613,114 @@ router.get('/protected-route', async (req, res) => {
   } catch (error) {
     console.error('Protected route error:', { name: error.name, message: error.message });
     return res.status(500).json({ status: 'error', message: 'Error accessing protected route', error: error.message });
+  }
+});
+
+// ===================== DEBUG ENDPOINTS =====================
+
+// Debug endpoint to test QR code generation with real Cognito
+router.post('/debug-setup-authenticator', async (req, res) => {
+  try {
+    const { session, username, issuer = 'Fortress-Portal' } = req.body || {};
+    
+    if (!session || !username) {
+      return res.status(400).json({ 
+        error: 'Session and username are required for debug setup' 
+      });
+    }
+
+    console.log('=== DEBUG AUTHENTICATOR SETUP ===');
+    console.log('Session:', session.substring(0, 20) + '...');
+    console.log('Username:', username);
+    console.log('Issuer:', issuer);
+
+    // Associate software token using Session
+    const assoc = await cognitoClient.send(new AssociateSoftwareTokenCommand({ Session: session }));
+    
+    console.log('Secret code generated:', assoc.SecretCode ? 'Yes' : 'No');
+    console.log('New session:', assoc.Session ? 'Yes' : 'No');
+
+    // Generate QR code
+    const accountName = encodeURIComponent(username);
+    const otpauth = `otpauth://totp/${encodeURIComponent(issuer)}:${accountName}?secret=${assoc.SecretCode}&issuer=${encodeURIComponent(issuer)}`;
+    const qrCode = await QRCode.toDataURL(otpauth);
+
+    console.log('QR code generated:', qrCode ? 'Yes' : 'No');
+    console.log('QR code length:', qrCode ? qrCode.length : 0);
+    console.log('OTP Auth URL:', otpauth);
+
+    return res.json({ 
+      status: 'success', 
+      message: 'Debug authenticator setup completed',
+      debug: {
+        sessionReceived: !!session,
+        usernameReceived: !!username,
+        secretCodeGenerated: !!assoc.SecretCode,
+        qrCodeGenerated: !!qrCode,
+        qrCodeLength: qrCode ? qrCode.length : 0,
+        otpauthUrl: otpauth,
+        qrCodePrefix: qrCode ? qrCode.substring(0, 50) + '...' : 'No QR code'
+      },
+      secretCode: assoc.SecretCode, 
+      session: assoc.Session, 
+      qrCode,
+      otpauthUrl: otpauth,
+      instructions: [
+        '1. The QR code is returned as a data URL in the qrCode field',
+        '2. Display it using: <img src="' + (qrCode ? qrCode.substring(0, 50) + '...' : 'data:image/png;base64,...') + '" />',
+        '3. Or use the secretCode to manually add to authenticator app',
+        '4. The otpauthUrl can be used directly in some authenticator apps'
+      ]
+    });
+  } catch (error) {
+    console.error('Debug setup authenticator error:', { name: error.name, message: error.message });
+    return res.status(400).json({ 
+      status: 'error', 
+      message: 'Debug authenticator setup failed', 
+      error: error.message,
+      errorType: error.name 
+    });
+  }
+});
+
+// Debug endpoint to test QR code display in different formats
+router.get('/debug-qr-formats/:data', async (req, res) => {
+  try {
+    const { data } = req.params;
+    
+    // Decode the data
+    const decodedData = Buffer.from(data, 'base64').toString('utf-8');
+    
+    // Generate QR code in different formats
+    const qrCodeDataURL = await QRCode.toDataURL(decodedData);
+    const qrCodeSVG = await QRCode.toString(decodedData, { type: 'svg' });
+    const qrCodeBuffer = await QRCode.toBuffer(decodedData);
+    
+    res.json({
+      status: 'success',
+      message: 'QR code formats generated',
+      originalData: decodedData,
+      formats: {
+        dataURL: qrCodeDataURL,
+        svg: qrCodeSVG,
+        buffer: qrCodeBuffer.toString('base64'),
+        dataURLPrefix: qrCodeDataURL.substring(0, 50) + '...',
+        svgLength: qrCodeSVG.length,
+        bufferSize: qrCodeBuffer.length
+      },
+      usage: {
+        dataURL: 'Use in <img src="data:image/png;base64,..." />',
+        svg: 'Use directly in HTML or convert to other formats',
+        buffer: 'Use for file downloads or API responses'
+      }
+    });
+  } catch (error) {
+    console.error('Debug QR formats error:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to generate QR code formats',
+      error: error.message
+    });
   }
 });
 
