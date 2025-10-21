@@ -99,11 +99,16 @@ const makeZohoAPICall = async (url, method = 'GET', data = null, retryCount = 0,
 
 
 export async function getFolderByName(parentId, folderName) {
-  console.log("parent_id" , parentId)
- const url = `${ZOHO_CONFIG.baseUrlWorkdrive}/files/${parentId}/files`;
-    const response = await makeZohoAPICall(url, 'GET', null, 0, true);
-    // console.log("res", response)
-  return response.data.find(folder => folder.attributes.name === folderName) || null;
+  console.log("parent_id", parentId);
+  const url = `${ZOHO_CONFIG.baseUrlWorkdrive}/files/${parentId}/files`;
+  const response = await makeZohoAPICall(url, "GET", null, 0, true);
+
+  // Find folder whose name includes the search string (case-insensitive)
+  const folder = response.data.find(f =>
+    f.attributes.name.toLowerCase().includes(folderName.toLowerCase())
+  );
+
+  return folder || null;
 }
 
 // Create a folder under parent

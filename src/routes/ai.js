@@ -1,5 +1,5 @@
 import express from "express";
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import dotenv from "dotenv";
 import { authenticateToken } from "../middleware/auth.js";
 import multer from "multer";
@@ -327,34 +327,176 @@ router.post(
         `Analyzing ${req.files.length} files for user: ${req.user.email}`
       );
 
+      const prompt = `You are a professional tax document classification assistant. You receive uploaded files (names and/or text content) and must decide where they belong in a taxpayer’s Zoho WorkDrive folder structure. Always classify based on U.S. federal, state, and trust tax rules.
+
+1. Folder Structure Rules
+
+Each Account (Individual, Business, or Trust) has a Year folder (e.g., 2023, 2024). Inside each year folder, there are seven standard folders, each with defined subfolders:
+
+01 – Tax Return & Extensions
+
+Drafts – early versions before filing.
+
+Final Filed Return – signed and submitted returns (1040, 1065, 1120, 1041, etc.).
+
+E-File Confirmations – IRS/state acknowledgments.
+
+Federal Extension (Forms 4868, 7004) – extension requests.
+
+State Extensions – state equivalents.
+
+Estimated Tax Vouchers (Q1–Q4) – quarterly estimated payments.
+
+Payment Confirmations – proof of tax payments.
+
+02 – Source Docs (Client-Provided)
+
+W-2s – employee wage statements.
+
+1099s (INT, DIV, MISC, NEC, K, R, B, G, K-1) – contractor, investment, or retirement income.
+
+K-1s – pass-through entity income.
+
+Mortgage/1098 – mortgage interest.
+
+Brokerage / Investment Statements – stocks, bonds, crypto CSVs.
+
+Foreign Assets (FBAR / 8938) – offshore accounts.
+
+Education / HSA / Medical Docs – 1098-T, 1098-E, HSA forms.
+
+Charitable Contributions – receipts and letters.
+
+Other Supporting Docs – anything else relevant.
+
+03 – Tax Planning & Projections
+
+Withholding Reviews.
+
+IRA / Roth comparisons.
+
+Optimization memos.
+
+Shareholder compensation or dividend strategies (Business).
+
+Trust DNI projections and distribution strategies (Trust).
+
+04 – IRS & State Correspondence
+
+Notices – audit letters, penalties, CP2000, etc.
+
+Responses – prepared replies.
+
+Audit Materials / Filing Proofs / Payment Proofs – supporting docs.
+
+Beneficiary Letters (Trust).
+
+05 – Engagement & Authority
+
+Engagement Letters (signed scope agreements).
+
+E-File Authorization (Form 8879 / Fiduciary 8879).
+
+Power of Attorney (Forms 2848, 8821, 56 for trusts).
+
+Secretary of State filings (Business).
+
+06 – Spreadsheets & Excel Files
+
+Client Excel summaries.
+
+Sale of asset logs.
+
+Capital account tracking.
+
+Inventory valuation.
+
+Basis calculations.
+
+Trust ledger.
+
+07 – Admin & Internal Notes
+
+Prep checklists.
+
+Internal review notes & comments.
+
+Workpapers for Schedules A/B/D/M-1/M-2.
+
+Depreciation schedules.
+
+Trustee discussions.
+
+Beneficiary distribution logs (Trust).
+
+2. Document Type Mapping
+
+Use these mappings to match documents to folders:
+
+Individual (Forms): 1040, 1040-SR, 1040-X, W-2, 1099 (INT/DIV/MISC/NEC/B/R/G/K), 1098 (Mortgage, Tuition, Loan Interest), 8863 (Education Credits), 8889 (HSAs), 8962 (Premium Tax Credit), FBAR, Form 1116 (Foreign Tax Credit), Form 2555 (Foreign Earned Income).
+
+Business (Forms): 1065, 1120, 1120S, 941, 940, W-9, W-3, 1096, 2553, 2848, 8821, 8300, 4797, 4562, 6252, 8832, 720, Schedule K-2/K-3.
+
+Trust (Forms): 1041, K-1 (1041), 5227, 1041-ES, 3520, 3520-A, 2439, 8282/8283, Form 56 (Fiduciary), 8655.
+
+All taxpayers (supporting docs): income docs (W-2, 1099s, SSA-1099, K-1s, rental logs), deduction docs (property tax bills, charitable receipts, EV credit docs), assets/investments (HUD-1, brokerage statements, crypto CSVs), retirement & insurance docs (5498, 1095s, long-term care premiums).
+
+Respond with ONLY a JSON object in this exact format:
+{
+  "suggested_path": "/Main_Category/Sub_Category/Year_or_Details/",
+  "category": "tax_document|business_document|personal_document|contract|other",
+  "confidence": 0.95,
+  "reasoning": "Brief explanation of why this folder structure was chosen",
+  "auto_create": true
+}
+  
+example of folders :
+2025 Tax Files
+├─ Admin & Internal Files
+├─ Engagement & Authority Documents
+├─ Tax Planning & Projections
+├─ Source Documents
+├─ Tax Returns & Extensions
+├─ IRS & State Correspondence
+├─ Spreadsheets & Excel Files
+ `
+;
+
       const analyses = [];
 
       // 🔹 Process each file
       for (const f of req.files) {
         console.log(`Uploading: ${f.originalname}`);
 
-        // console.log("Req", req.files);
-        // 1️⃣ Upload file to OpenAI
-        // const uploaded = await openai.files.create({
-        //   file: bufferToStream(f.buffer), // ✅ wrap buffer
+        // Convert buffer to OpenAI File object using toFile
+        const openaiFile = await toFile(f.buffer, f.originalname);
+
+        // Upload file
+        const filedata = await openai.files.create({
+          file: openaiFile,
+          purpose: "assistants",
+        });
+
+        console.log("✅ File uploaded to OpenAI:", filedata);
+
+        // const filedata = {
+        //   object: "file",
+        //   id: "file-4vSBr7E66AVX3QzUWNCfoQ",
         //   purpose: "assistants",
-        // });
-
-        // const fileMessage = {
-        //   type: f.mimetype.startsWith("image/") ? "image" : "file",
-        //   file: f.buffer,
-        //   file_id: uploaded.id
+        //   filename: "Two Trust 2024 form 1041 As Filed (Gov).pdf",
+        //   bytes: 164475,
+        //   created_at: 1761067700,
+        //   expires_at: null,
+        //   status: "processed",
+        //   status_details: null,
         // };
-        // console.log("Uploaded file id:", uploaded.id);
-
-        // 2️⃣ Ask OpenAI to analyze that single file
+        // Ask GPT-4o-mini to analyze file
         const completion = await openai.chat.completions.create({
           model: "gpt-4o-mini",
           messages: [
             {
               role: "system",
-              content:
-                "You are a professional document organization assistant. Always respond with valid JSON only.",
+              content: prompt,
             },
             {
               role: "user",
@@ -362,28 +504,25 @@ router.post(
                 {
                   type: "text",
                   text: `Analyze this file and suggest folder structure.
-
-                  User: ${req.user.given_name} ${req.user.family_name} (${
-                    req.user.email
-                  })
+                  User: ${req.user?.given_name || "Unknown"} ${
+                    req.user?.family_name || ""
+                  }
                   Upload Date: ${new Date().toISOString().split("T")[0]}
                   ${userContext ? `Business Context: ${userContext}` : ""}
 
-                  Respond with JSON only in this format:
-                  {
-                    "filename": "${f.originalname}",
-                    "suggested_path": "/Main_Category/Sub_Category/Year_or_Details/",
-                    "category": "tax_document|business_document|personal_document|contract|other",
-                    "confidence": 0.95,
-                    "reasoning": "Why this folder was chosen",
-                    "auto_create": true
-                  }`,
+                  Respond with JSON only.`,
                 },
-                // fileMessage,
+                {
+                  file: {
+                    filename: filedata.originalname,
+                    file_id: filedata.id,
+                  },
+                  type: "file",
+                },
               ],
             },
           ],
-          max_tokens: 600,
+          max_tokens: 800,
           temperature: 0.2,
         });
 
@@ -403,8 +542,8 @@ router.post(
 
         analyses.push({
           filename: f.originalname,
-          fileType: f.mimetype, 
-          fileBuffer : f.buffer,
+          fileType: f.mimetype,
+          fileBuffer: f.buffer,
           // openaiFileId: uploaded.id, // keep fileId for later retrieval
           analysis: parsed,
         });
@@ -416,47 +555,60 @@ router.post(
       let uploadedFile = [];
       const accountIdsString = accountId.toString();
       const response = await getWorkDrive(accountIdsString);
-      const WorkDrives = response.map(account => {
+      const WorkDrives = response.map((account) => {
         const link = account.easyworkdriveforcrm__Workdrive_Folder_ID_EXT;
-          let folderId = null;
-          if (typeof link === 'string' && link.includes('/')) {
-            folderId = link.split('/').pop();
-          }
-          return {
-            id: account.id,
-            folderId
-          };
+        let folderId = null;
+        if (typeof link === "string" && link.includes("/")) {
+          folderId = link.split("/").pop();
+        }
+        return {
+          id: account.id,
+          folderId,
+        };
       });
       let WorkDrive = WorkDrives[0];
       console.log("WorkDrive Folders:", WorkDrive);
       for (const analysisItem of analyses) {
         const suggestedPath = analysisItem.analysis?.suggested_path;
         if (!suggestedPath) continue;
-        const pathParts = suggestedPath.split("/").filter(Boolean); // ["Main", "Sub", "Year"]
-        console.log(pathParts)
+        const pathParts = suggestedPath.split("/").filter(Boolean); 
+        console.log(pathParts);
         for (const folderName of pathParts) {
           let folder = await getFolderByName(WorkDrive.folderId, folderName);
-          console.log("hecking folder ," , folder)
+          console.log("hecking folder ,", folder);
           if (!folder) {
             console.log("Folder not found, creating:", folderName);
             folder = await createFolder(WorkDrive.folderId, folderName);
-            console.log("")
+            console.log("");
             console.log("Created folder:", folderName);
           }
           WorkDrive.folderId = folder.id; // set parent for next level
-
         }
 
         // Upload the file to the final folder
-        console.log("WorkDrive.folderId, analysisItem.fileBuffer, analysisItem.filename" , WorkDrive.folderId, analysisItem.fileBuffer, analysisItem.filename)
-        const uploaded = await uploadFile(WorkDrive.folderId, analysisItem.fileBuffer, analysisItem.filename);
-        console.log("Uploaded file:", analysisItem.filename, "to folder:", WorkDrive.folderId);
-        console.log("uploadedFile ", uploadedFile)
+        console.log(
+          "WorkDrive.folderId, analysisItem.fileBuffer, analysisItem.filename",
+          WorkDrive.folderId,
+          analysisItem.fileBuffer,
+          analysisItem.filename
+        );
+        const uploaded = await uploadFile(
+          WorkDrive.folderId,
+          analysisItem.fileBuffer,
+          analysisItem.filename
+        );
+        console.log(
+          "Uploaded file:",
+          analysisItem.filename,
+          "to folder:",
+          WorkDrive.folderId
+        );
+        console.log("uploadedFile ", uploadedFile);
         uploadedFile.push({
           filename: analysisItem.filename,
           fileType: analysisItem.fileType,
-          parent_id : WorkDrive.folderId,
-          fileId: uploaded?.id 
+          parent_id: WorkDrive.folderId,
+          fileId: uploaded?.id,
         });
       }
       res.json({
@@ -475,7 +627,6 @@ router.post(
     }
   }
 );
-
 
 // Test folder structure generation
 router.post("/suggest-folders", authenticateToken, async (req, res) => {
