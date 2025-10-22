@@ -450,15 +450,7 @@ Respond with ONLY a JSON object in this exact format:
 "reasoning": "Brief explanation of why this folder structure was chosen",
 "auto_create": true
 
-example of folders :
-2025 Tax Files
-├─ Admin & Internal Files
-├─ Engagement & Authority Documents
-├─ Tax Planning & Projections
-├─ Source Documents
-├─ Tax Returns & Extensions
-├─ IRS & State Correspondence
-├─ Spreadsheets & Excel Files
+
 }`;
 
 
