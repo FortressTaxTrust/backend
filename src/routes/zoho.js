@@ -3,6 +3,7 @@ import axios from 'axios';
 import dotenv from 'dotenv';
 import { authenticateToken } from '../middleware/auth.js';
 import FormData from 'form-data';
+import stringSimilarity from "string-similarity";
 
 // Load environment variables
 dotenv.config();
@@ -103,12 +104,20 @@ export async function getFolderByName(parentId, folderName) {
   const url = `${ZOHO_CONFIG.baseUrlWorkdrive}/files/${parentId}/files`;
   const response = await makeZohoAPICall(url, "GET", null, 0, true);
 
-  // Find folder whose name includes the search string (case-insensitive)
-  const folder = response.data.find(f =>
-    f.attributes.name.toLowerCase().includes(folderName.toLowerCase())
-  );
+  if (!response?.data || response.data.length === 0) return null;
+  
+  const folders = response.data.filter(f => f?.attributes?.type === "folder" && f?.attributes?.name);
 
-  return folder || null;
+  if (folders.length === 0) {
+    console.log("No folders found under parentId:", parentId);
+    return null;
+  }
+  const bestMatch = stringSimilarity.findBestMatch(folderName.toLowerCase(), folders.map(f => f.attributes.name.toLowerCase()));
+  console.log("bestMatch", bestMatch);
+
+  const matchedFolder = folders.find(f => f.attributes.name.toLowerCase().includes(bestMatch.bestMatch.target.toLowerCase()));
+  console.log("matchedFolder", matchedFolder);
+  return matchedFolder || null;
 }
 
 // Create a folder under parent
@@ -699,14 +708,26 @@ router.get('/workdrive/folder/:folderId/contents', async (req, res) => {
     const response = await makeZohoAPICall(url, 'GET', null, 0, true);
     const breadcrumbResponse = await makeZohoAPICall(breadcrumb, 'GET', null, 0, true);
     let breadcrumbData = [];
-    if(breadcrumbResponse.data && breadcrumbResponse.data.length > 0) {
-      console.log("breadcrumbResponse" , breadcrumbResponse);
-      breadcrumbData = breadcrumbResponse.data.map(item => ({
-        id: item.id,
-        attributes: item.attributes,
-        type: item.type,
-        links : item.type
-      }));
+    if (breadcrumbResponse.data && breadcrumbResponse.data.length > 0) {
+        let foundWorkspace = false;
+        breadcrumbData = breadcrumbResponse.data
+          .filter(item => {
+            if (item.type === "workspace") return (foundWorkspace = true), true;
+            if (foundWorkspace && item.type === "folder") return !(foundWorkspace = false);
+            return !foundWorkspace;
+          })
+          .map(item => ({
+            id: item.id,
+            attributes: {
+              ...item.attributes,
+              parent_ids: Array.isArray(item.attributes?.parent_ids)
+                ? item.attributes.parent_ids.slice(3)
+                : []
+            },
+            type: item.type,
+            links: item.type
+          }));
+
     }
     res.json({
       status: 'success',

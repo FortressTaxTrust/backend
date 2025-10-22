@@ -331,9 +331,9 @@ router.post(
 
 1. Folder Structure Rules
 
-Each Account (Individual, Business, or Trust) has a Year folder (e.g., 2023, 2024). Inside each year folder, there are seven standard folders, each with defined subfolders:
+Each Zoho Account has a Year folder (e.g., 2023, 2024). Inside each year folder, there are seven standard subfolders, each with defined parameters of what kinds of documents should be included in that folder after upload:
 
-01 – Tax Return & Extensions
+01 – Tax Returns & Extensions
 
 Drafts – early versions before filing.
 
@@ -349,7 +349,7 @@ Estimated Tax Vouchers (Q1–Q4) – quarterly estimated payments.
 
 Payment Confirmations – proof of tax payments.
 
-02 – Source Docs (Client-Provided)
+02 – Source Documents
 
 W-2s – employee wage statements.
 
@@ -391,7 +391,7 @@ Audit Materials / Filing Proofs / Payment Proofs – supporting docs.
 
 Beneficiary Letters (Trust).
 
-05 – Engagement & Authority
+05 – Engagement & Authority Documents	
 
 Engagement Letters (signed scope agreements).
 
@@ -415,7 +415,7 @@ Basis calculations.
 
 Trust ledger.
 
-07 – Admin & Internal Notes
+07 – Admin & Internal Files
 
 Prep checklists.
 
@@ -428,28 +428,28 @@ Depreciation schedules.
 Trustee discussions.
 
 Beneficiary distribution logs (Trust).
+If you are at least 95% confident that the document you are examining does not fit within any of the predefined subfolders you have to choose from then use the Admin & Internal Files folder as a catch-all destination for that file.  
 
 2. Document Type Mapping
 
 Use these mappings to match documents to folders:
 
-Individual (Forms): 1040, 1040-SR, 1040-X, W-2, 1099 (INT/DIV/MISC/NEC/B/R/G/K), 1098 (Mortgage, Tuition, Loan Interest), 8863 (Education Credits), 8889 (HSAs), 8962 (Premium Tax Credit), FBAR, Form 1116 (Foreign Tax Credit), Form 2555 (Foreign Earned Income).
+Individual (Forms): 1040, 1040-SR, 1040-X, W-2, 1099 (INT/DIV/MISC/NEC/B/R/G/K), 1098 (Mortgage, Tuition, Loan Interest), 8863 (Education Credits), 8889 (HSAs), 8962 (Premium Tax Credit), FBAR, Form 1116 (Foreign Tax Credit), Form 2555 (Foreign Earned Income), etc
 
-Business (Forms): 1065, 1120, 1120S, 941, 940, W-9, W-3, 1096, 2553, 2848, 8821, 8300, 4797, 4562, 6252, 8832, 720, Schedule K-2/K-3.
+Business (Forms): 1065, 1120, 1120S, 941, 940, W-9, W-3, 1096, 2553, 2848, 8821, 8300, 4797, 4562, 6252, 8832, 720, Schedule K-2/K-3, etc
 
-Trust (Forms): 1041, K-1 (1041), 5227, 1041-ES, 3520, 3520-A, 2439, 8282/8283, Form 56 (Fiduciary), 8655.
+Trust (Forms): 1041, K-1 (1041), 5227, 1041-ES, 3520, 3520-A, 2439, 8282/8283, Form 56 (Fiduciary), 8655, etc
 
 All taxpayers (supporting docs): income docs (W-2, 1099s, SSA-1099, K-1s, rental logs), deduction docs (property tax bills, charitable receipts, EV credit docs), assets/investments (HUD-1, brokerage statements, crypto CSVs), retirement & insurance docs (5498, 1095s, long-term care premiums).
 
 Respond with ONLY a JSON object in this exact format:
 {
-  "suggested_path": "/Main_Category/Sub_Category/Year_or_Details/",
-  "category": "tax_document|business_document|personal_document|contract|other",
-  "confidence": 0.95,
-  "reasoning": "Brief explanation of why this folder structure was chosen",
-  "auto_create": true
-}
-  
+"suggested_path": "Year_or_Details/Main_Category/Sub_Category/",
+"category": "tax_document|business_document|personal_document|contract|other",
+"confidence": 0.95,
+"reasoning": "Brief explanation of why this folder structure was chosen",
+"auto_create": true
+
 example of folders :
 2025 Tax Files
 ├─ Admin & Internal Files
@@ -459,8 +459,8 @@ example of folders :
 ├─ Tax Returns & Extensions
 ├─ IRS & State Correspondence
 ├─ Spreadsheets & Excel Files
- `
-;
+}`;
+
 
       const analyses = [];
 
@@ -477,19 +477,19 @@ example of folders :
           purpose: "assistants",
         });
 
-        console.log("✅ File uploaded to OpenAI:", filedata);
+        // console.log("✅ File uploaded to OpenAI:", filedata);
 
         // const filedata = {
-        //   object: "file",
-        //   id: "file-4vSBr7E66AVX3QzUWNCfoQ",
-        //   purpose: "assistants",
-        //   filename: "Two Trust 2024 form 1041 As Filed (Gov).pdf",
-        //   bytes: 164475,
-        //   created_at: 1761067700,
-        //   expires_at: null,
-        //   status: "processed",
-        //   status_details: null,
-        // };
+        //     object: 'file',
+        //     id: 'file-XnfvksSgR5hJTx9fLnSBYQ',
+        //     purpose: 'assistants',
+        //     filename: 'Two Trust 2024 form 1041 As Filed (Gov).pdf',
+        //     bytes: 164475,
+        //     created_at: 1761156348,
+        //     expires_at: null,
+        //     status: 'processed',
+        //     status_details: null
+        //   }
         // Ask GPT-4o-mini to analyze file
         const completion = await openai.chat.completions.create({
           model: "gpt-4o-mini",
@@ -577,6 +577,7 @@ example of folders :
           let folder = await getFolderByName(WorkDrive.folderId, folderName);
           console.log("hecking folder ,", folder);
           if (!folder) {
+            continue
             console.log("Folder not found, creating:", folderName);
             folder = await createFolder(WorkDrive.folderId, folderName);
             console.log("");
