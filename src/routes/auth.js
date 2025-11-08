@@ -363,12 +363,16 @@ router.post('/signup', async (req, res) => {
 
     const params = {
       ClientId: COGNITO_CONFIG.clientId,
-      Username: username,
+      Username: email,
       Password: password,
-      UserAttributes: [{ Name: 'email', Value: email }],
-      ValidationData: [{ Name: 'email', Value: email }]
+      UserAttributes: [
+        { Name: 'email', Value: email },
+        { Name: 'given_name', Value: username },
+        { Name: 'family_name', Value: username }
+      ],
     };
-    const secretHash = calculateSecretHash(username);
+
+    const secretHash = calculateSecretHash(email);
     if (secretHash) params.SecretHash = secretHash;
 
     const r = await cognitoClient.send(new SignUpCommand(params));
@@ -380,7 +384,7 @@ router.post('/signup', async (req, res) => {
     });
   } catch (error) {
     console.error('Signup error:', { name: error.name, message: error.message });
-    return res.status(400).json({ status: 'error', message: 'Signup failed', error: error.message });
+    return res.status(400).json({ status: 'error', message: error.message || 'Signup failed', error: error.message });
   }
 });
 
