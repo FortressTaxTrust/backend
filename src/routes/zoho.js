@@ -284,7 +284,7 @@ router.get('/crm/my-contact', authenticateToken, async (req, res) => {
 
 
 // Test route to find linked accounts using COQL with linking module
-router.get('/test/linked-accounts-coql/:email', async (req, res) => {
+router.get('/test/linked-accounts-coql/:email',authenticateToken, async (req, res) => {
   try {
     const { email } = req.params;
     
@@ -354,7 +354,7 @@ router.get('/test/linked-accounts-coql/:email', async (req, res) => {
 
 
 // Test route to find linked accounts by Cognito ID
-router.get('/linked-accounts-by-cognito/:cognitoId', async (req, res) => {
+router.get('/linked-accounts-by-cognito/:cognitoId',authenticateToken, async (req, res) => {
   try {
     const { cognitoId } = req.params;
 
@@ -443,7 +443,7 @@ router.get('/linked-accounts-by-cognito/:cognitoId', async (req, res) => {
 
 
 // Route to get full account details for linked accounts
-router.get('/account-details/:accountId', async (req, res) => {
+router.get('/account-details/:accountId',authenticateToken, async (req, res) => {
   try {
     const { accountId } = req.params;
     
@@ -533,7 +533,7 @@ router.get('/account-details/:accountId', async (req, res) => {
 });
 
 // Route to get multiple account details by IDs
-router.post('/accounts-details', async (req, res) => {
+router.post('/accounts-details', authenticateToken, async (req, res) => {
   try {
     const { accountIds } = req.body;
     
@@ -627,7 +627,7 @@ router.post('/accounts-details', async (req, res) => {
 });
 
 // Route to get Workdrive folder links and parsed folder IDs for accounts
-router.post('/accounts-workdrive-folders', async (req, res) => {
+router.post('/accounts-workdrive-folders', authenticateToken, async (req, res) => {
   try {
     const { accountIds } = req.body;
     if (!accountIds || !Array.isArray(accountIds) || accountIds.length === 0) {
@@ -690,7 +690,7 @@ router.post('/accounts-workdrive-folders', async (req, res) => {
 // === WORKDRIVE FOLDER TRAVERSAL ROUTES ===
 
 // 1. List contents of a WorkDrive folder by folder ID
-router.get('/workdrive/folder/:folderId/contents', async (req, res) => {
+router.get('/workdrive/folder/:folderId/contents',authenticateToken, async (req, res) => {
   try {
     const { folderId } = req.params;
     if (!folderId) {
@@ -769,7 +769,7 @@ router.get('/workdrive/folder/:folderId/contents', async (req, res) => {
 });
 
 // 2. Get metadata for a WorkDrive file or folder by ID
-router.get('/workdrive/file/:fileId', async (req, res) => {
+router.get('/workdrive/file/:fileId',authenticateToken, async (req, res) => {
   try {
     const { fileId } = req.params;
     if (!fileId) {
@@ -797,7 +797,7 @@ router.get('/workdrive/file/:fileId', async (req, res) => {
   }
 });
 
-router.get("/workdrive/download/:fileId", async (req, res) => {
+router.get("/workdrive/download/:fileId",authenticateToken, async (req, res) => {
   const { fileId } = req.params;
   try {
     const oneDayLater = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split("T")[0].replace(/-/g, "-");
@@ -830,7 +830,7 @@ router.get("/workdrive/download/:fileId", async (req, res) => {
   }
 });
 
-router.get("/workdrive/:fileId/preview", async (req, res) => {
+router.get("/workdrive/:fileId/preview", authenticateToken, async (req, res) => {
   const { fileId } = req.params;
   try {
     const data = {
@@ -853,6 +853,292 @@ router.get("/workdrive/:fileId/preview", async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: "File Preview failed" });
+  }
+});
+
+
+// Create a new Account in Zoho CRM
+router.post('/create-account', authenticateToken, async (req, res) => {
+  const errorList = []; // Collect all errors
+  let accountId = null;
+
+  try {
+    const accountData = req.body.accountData;
+    const userData = req.body.userData;
+
+    // Validate required fields
+    if (!accountData?.accountName || !accountData?.accountType) {
+      errorList.push({
+        source: 'validation',
+        message: 'Account Name and Account Type are required',
+      });
+      return res.status(400).json({ status: 'error', errors: errorList });
+    }
+
+    // Prepare Zoho Account payload
+    const accountPayload = {
+      data: [
+        {
+          Owner: { id: "6791036000000558001" },
+          Account_Name: accountData.accountName || "",
+          Account_Type: accountData.accountType || "",
+          Description: accountData.description || "",
+          Client_Note: accountData.clientNote || "",
+          Phone_1: accountData.phone1 || "",
+          Fax: accountData.fax || "",
+          Client_ID : accountData.clientId || "",
+          Billing_Street: accountData.billingStreet || "",
+          Billing_City: accountData.billingCity || "",
+          Billing_State: accountData.billingState || "",
+          Billing_Country: accountData.billingCountry || "",
+          Billing_Code: accountData.billingCode || "",
+          URL_2: accountData.url2 || "",
+          easyworkdriveforcrm__Workdrive_Folder_ID_EXT: accountData.workDriveId || "",
+          Workdrive_Link: accountData.workDriveLink || "",
+          Ownership: accountData.trustee || "",
+          Compliance_Officer: accountData.complianceOfficer || "",
+          Annual_Revenue: "",
+          Industry: "",
+          Rating: "",
+          SIC_Code: "",
+          Shipping_Street: "",
+          Shipping_City: "",
+          Shipping_State: "",
+          Shipping_Country: "",
+          Shipping_Code: "",
+          TIN: accountData.taxId || "",
+          Date_Created: accountData.dateCreated || "",
+          Trustee: accountData.trusteeName || "",
+          Account_Owner: accountData.accountOwner || "",
+          OpenCorp_Page: accountData.openCorpPage || ""
+        }
+      ],
+      trigger: ["workflow"],
+      duplicate_check_fields: ["Account_Name", "Account_Number"] // optional for upsert
+    };
+
+
+    // Create Account
+    try {
+      const accountResponse = await makeZohoAPICall(
+        `${ZOHO_CONFIG.baseUrlCRM}/Accounts`,
+        "POST",
+        accountPayload
+      );
+
+      if (!accountResponse?.data?.[0]?.details?.id) {
+        errorList.push({
+          source: "zoho-account",
+          message: "Failed to create account in Zoho",
+          response: accountResponse
+        });
+      } else {
+        accountId = accountResponse.data[0].details.id;
+      }
+    } catch (err) {
+      errorList.push({
+        source: "zoho-account",
+        message: "Zoho Account API error",
+        error: err.response?.data || err.message || err
+      });
+    }
+
+    // If account creation failed, return errors
+    if (!accountId) {
+      return res.status(500).json({ status: 'error', errors: errorList });
+    }
+
+    const contacts = [
+      ...(accountData.connectedContacts || []),
+      { firstName: userData.given_name, lastName: userData.given_name, email: userData.email , cognitoId : userData.username }
+    ];
+
+    let contactResponses = [];
+    // Create contacts
+    for (const contact of contacts) {
+      const firstName = contact.firstName || "";
+      const lastName = contact.lastName || "";
+      const email = contact.email || "";
+      const phone = contact.phone || "";
+      const mobile = contact.mobile || "";
+      const accountRef = accountId;
+      
+      const contactPayload = {
+        data: [
+          {
+            Owner: { id: "6791036000000558001" },
+            Account_Name: { id: accountRef },
+            Cognito_User_ID : userData.username || "",
+            First_Name: firstName,
+            Last_Name: lastName,
+            Email: email,
+            Phone: phone,
+            Mobile: mobile,
+            Account_Type: contact.accountType || "Prospect",
+            Single_Line_1: contact.cognitoId || "",
+            Fax: contact.fax || "",
+            Department: contact.department || "",
+            Title: contact.title || "",
+            Description: contact.description || "",
+            Lead_Source: contact.leadSource || "",
+            Date_of_Birth: contact.dateOfBirth || "",
+            Mailing_Street:accountData.Billing_Street || "",
+            Mailing_City: accountData.Billing_City || "",
+            Mailing_State: accountData.Billing_State || "",
+            Mailing_Zip: accountData.Billing_Code || "",
+            Mailing_Country: accountData.Billing_Country || "",
+            Email_Opt_Out: false
+          }
+        ],
+        trigger: ["workflow"],
+        duplicate_check_fields: ["Email"]
+      };
+
+      try {
+        const contactResponse = await makeZohoAPICall(
+          `${ZOHO_CONFIG.baseUrlCRM}/Contacts`,
+          "POST",
+          contactPayload
+        );
+
+        if (!contactResponse?.data?.[0]?.details?.id) {
+          errorList.push({
+            source: "zoho-contact",
+            message: `Failed to create contact: ${firstName} ${lastName}`,
+            response: contactResponse
+          });
+        } else {
+          contactResponses.push(contactResponse.data[0].details);
+        }
+      } catch (err) {
+        errorList.push({
+          source: "zoho-contact",
+          message: `Zoho Contact API error for contact: ${firstName} ${lastName}`,
+          error: err.response?.data || err.message || err
+        });
+      }
+    }
+
+    // Return success with accountId and any contact errors
+    return res.json({
+      status: errorList.length ? "partial_success" : "success",
+      message: errorList.length
+        ? "Account created with some contact errors"
+        : "Account and contacts created successfully",
+      accountId,
+      errors: errorList,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error("Server Error:", error.response?.data || error.message || error);
+    errorList.push({
+      source: "server",
+      message: "Unexpected server error",
+      error: error.response?.data || error.message || error
+    });
+    return res.status(500).json({ status: "error", errors: errorList });
+  }
+});
+
+
+// Create a new Contact linked to an existing Account
+router.post('/create-contact', async (req, res) => {
+  try {
+    const {
+      First_Name,
+      Last_Name,
+      Email,
+      Phone,
+      Mobile,
+      Department,
+      Title,
+      Account,
+      Description,
+      Lead_Source,
+      Date_of_Birth,
+      Fax,
+      Secondary_Email,
+      Mailing_Street,
+      Mailing_City,
+      Mailing_State,
+      Mailing_Zip,
+      Mailing_Country,
+      Other_Street,
+      Other_City,
+      Other_State,
+      Other_Zip,
+      Other_Country
+    } = req.body;
+
+    if (!Last_Name || !Account) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Last_Name and Account_ID are required'
+      });
+    }
+
+    const payload = {
+      data: [
+        {
+          Owner: { id: "6791036000000558001" }, 
+          Account_Name: { id: Account },
+          First_Name,
+          Last_Name,
+          Email,
+          Secondary_Email,
+          Phone,
+          Mobile,
+          Fax,
+          Department,
+          Title,
+          Description,
+          Lead_Source,
+          Date_of_Birth,
+          Mailing_Street,
+          Mailing_City,
+          Mailing_State,
+          Mailing_Zip,
+          Mailing_Country,
+          Other_Street,
+          Other_City,
+          Other_State,
+          Other_Zip,
+          Other_Country,
+          Email_Opt_Out: false
+        }
+      ],
+      trigger: ['workflow']
+    };
+
+    console.log(`=== Creating Contact for Account ID: ${Account_ID} ===`);
+    const response = await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlCRM}/Contacts`, 'POST', payload);
+
+    if (!response.data || !response.data[0]?.details?.id) {
+      return res.status(500).json({
+        status: 'error',
+        message: 'Failed to create contact',
+        response
+      });
+    }
+
+    const contactId = response.data[0].details.id;
+
+    res.json({
+      status: 'success',
+      message: 'Contact created successfully',
+      contactId,
+      response,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Create Contact Error:', error.response?.data || error.message);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to create contact',
+      error: error.response?.data || error.message
+    });
   }
 });
 
