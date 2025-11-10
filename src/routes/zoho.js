@@ -4,6 +4,10 @@ import dotenv from 'dotenv';
 import { authenticateToken } from '../middleware/auth.js';
 import FormData from 'form-data';
 import stringSimilarity from "string-similarity";
+import multer from "multer";
+
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
 
 // Load environment variables
 dotenv.config();
@@ -99,25 +103,28 @@ const makeZohoAPICall = async (url, method = 'GET', data = null, retryCount = 0,
 };
 
 
-export async function getFolderByName(parentId, folderName) {
-  console.log("parent_id", parentId);
-  const url = `${ZOHO_CONFIG.baseUrlWorkdrive}/files/${parentId}/files`;
+export async function getFolderByName(parentId, folderName , matchFolder = true) {
+   const url = `${ZOHO_CONFIG.baseUrlWorkdrive}/files/${parentId}/files`;
   const response = await makeZohoAPICall(url, "GET", null, 0, true);
 
   if (!response?.data || response.data.length === 0) return null;
-  
+    console.log("parent_id", parentId);
   const folders = response.data.filter(f => f?.attributes?.type === "folder" && f?.attributes?.name);
-
   if (folders.length === 0) {
     console.log("No folders found under parentId:", parentId);
     return null;
   }
-  const bestMatch = stringSimilarity.findBestMatch(folderName.toLowerCase(), folders.map(f => f.attributes.name.toLowerCase()));
-  console.log("bestMatch", bestMatch);
+  if(matchFolder){
+    const bestMatch = stringSimilarity.findBestMatch(folderName.toLowerCase(), folders.map(f => f.attributes.name.toLowerCase()));
+    console.log("bestMatch", bestMatch);
 
-  const matchedFolder = folders.find(f => f.attributes.name.toLowerCase().includes(bestMatch.bestMatch.target.toLowerCase()));
-  console.log("matchedFolder", matchedFolder);
-  return matchedFolder || null;
+    const matchedFolder = folders.find(f => f.attributes.name.toLowerCase().includes(bestMatch.bestMatch.target.toLowerCase()));
+    console.log("matchedFolder", matchedFolder);
+    return matchedFolder || null;
+  } else {
+     return response.data.find(f => f?.attributes?.type === "folder" && f?.attributes?.name === folderName) || null; 
+  }
+  
 }
 
 // Create a folder under parent
@@ -1105,6 +1112,75 @@ router.post("/create-account", authenticateToken, async (req, res) => {
   }
 });
 
+
+router.post("/prospect/upload/files", authenticateToken, upload.array("files"), async (req, res) => {
+  try {
+    const { accountName } = req.body;
+    const files = req.files;
+
+    if (!files || files.length === 0) {
+      return res.status(400).json({ status: "error", message: "Files are required" });
+    }
+
+    if (!accountName) {
+      return res.status(400).json({ status: "error", message: "Account name is required" });
+    }
+    const parentId = process.env.WORKDRIVE_PROSPECT_FOLDER_ID || '0kkbg9b5447e7e4f54e63853111c1279e3044';
+    if (!parentId) {
+      return res.status(500).json({ status: "error", message: "Missing WORKDRIVE_PROSPECT_FOLDER_ID" });
+    }
+
+    // 🔹 Find or create folder
+    let folder = await getFolderByName(parentId, accountName , false);
+    console.log("folder   " ,folder)
+    if (!folder) {
+      folder = await createFolder(parentId, accountName);
+      console.log("Created new folder:", folder?.id || folder);
+    }
+
+    const uploadedFiles = [];
+
+    // 🔹 Upload each file
+    for (const file of files) {
+      try {
+        const uploadRes = await uploadFile(folder.id, file.buffer, file.originalname, "true");
+
+        uploadedFiles.push({
+          fileName: file.originalname,
+          fileType: file.mimetype,
+          folderId: folder.id,
+          uploadStatus: "success",
+          details: uploadRes?.data || {},
+        });
+
+        console.log(`✅ Uploaded: ${file.originalname} to folder ${folder.id}`);
+      } catch (err) {
+        console.error(`❌ Upload error for ${file.originalname}:`, err.message);
+        uploadedFiles.push({
+          fileName: file.originalname,
+          status: "error",
+          error: err.message,
+        });
+      }
+    }
+
+    // 🔹 Respond once after loop
+    return res.json({
+      status: "success",
+      message: "File upload completed",
+      uploadedFiles,
+      timestamp: new Date().toISOString(),
+    });
+
+  } catch (err) {
+    console.error("Endpoint error:", err);
+    return res.status(500).json({
+      status: "error",
+      message: "Internal server error",
+      error: err.message || err,
+    });
+  }
+});
 
 // Create a new Contact linked to an existing Account
 router.post('/create-contact', async (req, res) => {
