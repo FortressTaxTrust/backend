@@ -858,24 +858,114 @@ router.get("/workdrive/:fileId/preview", authenticateToken, async (req, res) => 
 
 
 // Create a new Account in Zoho CRM
-router.post('/create-account', authenticateToken, async (req, res) => {
-  const errorList = []; // Collect all errors
+router.post("/create-account", authenticateToken, async (req, res) => {
+  const errors = [];
   let accountId = null;
 
   try {
-    const accountData = req.body.accountData;
-    const userData = req.body.userData;
+    const { accountData, userData } = req.body;
 
-    // Validate required fields
-    if (!accountData?.accountName || !accountData?.accountType) {
-      errorList.push({
-        source: 'validation',
-        message: 'Account Name and Account Type are required',
+     if (!accountData?.accountName || !accountData?.accountType) {
+      return res.status(400).json({
+        status: "error",
+        errors: [
+          {
+            code: "VALIDATION_ERROR",
+            message: "Account Name and Account Type are required.",
+          },
+        ],
       });
-      return res.status(400).json({ status: 'error', errors: errorList });
+    }
+    const contacts = [
+      ...(accountData.connectedContacts || []),
+      {
+        firstName: userData.given_name,
+        lastName: userData.family_name || userData.given_name,
+        email: userData.email,
+        cognitoId: userData.username,
+      },
+    ].filter((c) => !!c.email);
+
+    const duplicateContacts = [];
+    for (const contact of contacts) {
+      try {
+        const existing = await makeZohoAPICall(
+          `${ZOHO_CONFIG.baseUrlCRM}/Contacts/search?criteria=(Email:equals:${encodeURIComponent(contact.email)})`,
+          "GET"
+        );
+        if (existing?.data?.length) {
+          duplicateContacts.push(contact.email);
+        }
+      } catch (err) {
+        if (err?.response?.status !== 204) {
+          errors.push({
+            code: "ZOHO_CONTACT_LOOKUP_ERROR",
+            message: `Error checking contact for ${contact.email}.`,
+            details: err.response?.data || err.message,
+          });
+        }
+      }
     }
 
-    // Prepare Zoho Account payload
+    if (duplicateContacts.length > 0) {
+      return res.status(400).json({
+        status: "error",
+        errors: [
+          {
+            code: "DUPLICATE_CONTACT",
+            message: `Contacts with the following emails already exist: ${duplicateContacts.join(", ")}.`,
+            details: duplicateContacts,
+          },
+        ],
+      });
+    }
+
+    try {
+      const existingAccount = await makeZohoAPICall(
+        `${ZOHO_CONFIG.baseUrlCRM}/Accounts/search?criteria=(Account_Name:equals:${encodeURIComponent(
+          accountData.accountName
+        )})`,
+        "GET"
+      );
+
+      if (existingAccount?.data?.length) {
+        return res.status(400).json({
+          status: "error",
+          errors: [
+            {
+              code: "DUPLICATE_ACCOUNT",
+              message: `An account named "${accountData.accountName}" already exists.`,
+            },
+          ],
+        });
+      }
+    } catch (err) {
+      if (err?.response?.status !== 204) {
+        errors.push({
+          code: "ZOHO_ACCOUNT_LOOKUP_ERROR",
+          message: `Error checking existing account: ${accountData.accountName}.`,
+          details: err.response?.data || err.message,
+        });
+      }
+    }
+    const folderId =
+      process.env.WORKDRIVE_PARENT_FOLDER_ID || "l0dnwed8da556672f4f6698fb16f1662271be";
+    const workdriveFolder = await createFolder(folderId, accountData.accountName);
+
+    if (!workdriveFolder?.attributes?.permalink) {
+      return res.status(500).json({
+        status: "error",
+        errors: [
+          {
+            code: "WORKDRIVE_FOLDER_ERROR",
+            message: "Failed to create WorkDrive folder for this account.",
+            details: workdriveFolder,
+          },
+        ],
+      });
+    }
+
+    const workdriveLink = workdriveFolder.attributes.permalink;
     const accountPayload = {
       data: [
         {
@@ -886,112 +976,78 @@ router.post('/create-account', authenticateToken, async (req, res) => {
           Client_Note: accountData.clientNote || "",
           Phone_1: accountData.phone1 || "",
           Fax: accountData.fax || "",
-          Client_ID : accountData.clientId || "",
+          Client_ID: accountData.clientId || "",
           Billing_Street: accountData.billingStreet || "",
           Billing_City: accountData.billingCity || "",
           Billing_State: accountData.billingState || "",
           Billing_Country: accountData.billingCountry || "",
           Billing_Code: accountData.billingCode || "",
-          URL_2: accountData.url2 || "",
-          easyworkdriveforcrm__Workdrive_Folder_ID_EXT: accountData.workDriveId || "",
-          Workdrive_Link: accountData.workDriveLink || "",
+          easyworkdriveforcrm__Workdrive_Folder_ID_EXT: workdriveLink,
+          Workdrive_Link: workdriveLink,
           Ownership: accountData.trustee || "",
           Compliance_Officer: accountData.complianceOfficer || "",
-          Annual_Revenue: "",
-          Industry: "",
-          Rating: "",
-          SIC_Code: "",
-          Shipping_Street: "",
-          Shipping_City: "",
-          Shipping_State: "",
-          Shipping_Country: "",
-          Shipping_Code: "",
           TIN: accountData.taxId || "",
           Date_Created: accountData.dateCreated || "",
           Trustee: accountData.trusteeName || "",
           Account_Owner: accountData.accountOwner || "",
-          OpenCorp_Page: accountData.openCorpPage || ""
-        }
+          OpenCorp_Page: accountData.openCorpPage || "",
+        },
       ],
       trigger: ["workflow"],
-      duplicate_check_fields: ["Account_Name", "Account_Number"] // optional for upsert
     };
 
+    const accountResponse = await makeZohoAPICall(
+      `${ZOHO_CONFIG.baseUrlCRM}/Accounts`,
+      "POST",
+      accountPayload
+    );
 
-    // Create Account
-    try {
-      const accountResponse = await makeZohoAPICall(
-        `${ZOHO_CONFIG.baseUrlCRM}/Accounts`,
-        "POST",
-        accountPayload
-      );
+    accountId = accountResponse?.data?.[0]?.details?.id;
 
-      if (!accountResponse?.data?.[0]?.details?.id) {
-        errorList.push({
-          source: "zoho-account",
-          message: "Failed to create account in Zoho",
-          response: accountResponse
-        });
-      } else {
-        accountId = accountResponse.data[0].details.id;
-      }
-    } catch (err) {
-      errorList.push({
-        source: "zoho-account",
-        message: "Zoho Account API error",
-        error: err.response?.data || err.message || err
+    if (!accountId) {
+      return res.status(500).json({
+        status: "error",
+        errors: [
+          {
+            code: "ZOHO_ACCOUNT_CREATE_ERROR",
+            message: "Failed to create account in Zoho CRM.",
+            details: accountResponse,
+          },
+        ],
       });
     }
+    const contactResults = [];
 
-    // If account creation failed, return errors
-    if (!accountId) {
-      return res.status(500).json({ status: 'error', errors: errorList });
-    }
-
-    const contacts = [
-      ...(accountData.connectedContacts || []),
-      { firstName: userData.given_name, lastName: userData.given_name, email: userData.email , cognitoId : userData.username }
-    ];
-
-    let contactResponses = [];
-    // Create contacts
     for (const contact of contacts) {
-      const firstName = contact.firstName || "";
-      const lastName = contact.lastName || "";
-      const email = contact.email || "";
-      const phone = contact.phone || "";
-      const mobile = contact.mobile || "";
-      const accountRef = accountId;
-      
       const contactPayload = {
         data: [
           {
             Owner: { id: "6791036000000558001" },
-            Account_Name: { id: accountRef },
-            Cognito_User_ID : userData.username || "",
-            First_Name: firstName,
-            Last_Name: lastName,
-            Email: email,
-            Phone: phone,
-            Mobile: mobile,
+            Account_Name: { id: accountId },
+            Connected_Accounts: [
+              {
+                Connected_Accounts: {
+                  module: "Accounts",
+                  name: accountData.accountName,
+                  id: accountId,
+                },
+              },
+            ],
+            Cognito_User_ID: contact.cognitoId || "",
+            First_Name: contact.firstName || "",
+            Last_Name: contact.lastName || "",
+            Email: contact.email || "",
+            Contact_Type: contact.contactType || "Prospect",
             Account_Type: contact.accountType || "Prospect",
             Single_Line_1: contact.cognitoId || "",
-            Fax: contact.fax || "",
-            Department: contact.department || "",
-            Title: contact.title || "",
-            Description: contact.description || "",
-            Lead_Source: contact.leadSource || "",
-            Date_of_Birth: contact.dateOfBirth || "",
-            Mailing_Street:accountData.Billing_Street || "",
-            Mailing_City: accountData.Billing_City || "",
-            Mailing_State: accountData.Billing_State || "",
-            Mailing_Zip: accountData.Billing_Code || "",
-            Mailing_Country: accountData.Billing_Country || "",
-            Email_Opt_Out: false
-          }
+            Mailing_Street: accountData.billingStreet || "",
+            Mailing_City: accountData.billingCity || "",
+            Mailing_State: accountData.billingState || "",
+            Mailing_Zip: accountData.billingCode || "",
+            Mailing_Country: accountData.billingCountry || "",
+          },
         ],
         trigger: ["workflow"],
-        duplicate_check_fields: ["Email"]
       };
 
       try {
@@ -1001,43 +1057,51 @@ router.post('/create-account', authenticateToken, async (req, res) => {
           contactPayload
         );
 
-        if (!contactResponse?.data?.[0]?.details?.id) {
-          errorList.push({
-            source: "zoho-contact",
-            message: `Failed to create contact: ${firstName} ${lastName}`,
-            response: contactResponse
+        if (contactResponse?.data?.[0]?.details?.id) {
+          contactResults.push({
+            email: contact.email,
+            id: contactResponse.data[0].details.id,
           });
         } else {
-          contactResponses.push(contactResponse.data[0].details);
+          errors.push({
+            code: "ZOHO_CONTACT_CREATE_ERROR",
+            message: `Failed to create contact: ${contact.email}.`,
+            details: contactResponse,
+          });
         }
       } catch (err) {
-        errorList.push({
-          source: "zoho-contact",
-          message: `Zoho Contact API error for contact: ${firstName} ${lastName}`,
-          error: err.response?.data || err.message || err
+        errors.push({
+          code: "ZOHO_CONTACT_CREATE_ERROR",
+          message: `Zoho API error while creating contact: ${contact.email}.`,
+          details: err.response?.data || err.message,
         });
       }
     }
-
-    // Return success with accountId and any contact errors
-    return res.json({
-      status: errorList.length ? "partial_success" : "success",
-      message: errorList.length
-        ? "Account created with some contact errors"
-        : "Account and contacts created successfully",
-      accountId,
-      errors: errorList,
-      timestamp: new Date().toISOString()
+    return res.status(errors.length ? 207 : 200).json({
+      status: errors.length ? "partial_success" : "success",
+      message: errors.length
+        ? "Account created successfully with some contact issues."
+        : "Account and contacts created successfully.",
+      data: {
+        accountId,
+        workdriveLink,
+        contacts: contactResults,
+      },
+      errors,
+      timestamp: new Date().toISOString(),
     });
-
   } catch (error) {
-    console.error("Server Error:", error.response?.data || error.message || error);
-    errorList.push({
-      source: "server",
-      message: "Unexpected server error",
-      error: error.response?.data || error.message || error
+    console.error("Server Error:", error.response?.data || error.message);
+    return res.status(500).json({
+      status: "error",
+      errors: [
+        {
+          code: "SERVER_ERROR",
+          message: "Unexpected server error occurred.",
+          details: error.response?.data || error.message,
+        },
+      ],
     });
-    return res.status(500).json({ status: "error", errors: errorList });
   }
 });
 
