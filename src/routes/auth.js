@@ -358,8 +358,8 @@ router.get('/mfa-preferences', async (req, res) => {
 
 router.post('/signup', async (req, res) => {
   try {
-    const { username, password, email } = req.body || {};
-    if (!username || !password || !email) return res.status(400).json({ error: 'Username, password, and email are required' });
+    const { firstName, lastName, password, email } = req.body || {};
+    if (!firstName || !lastName || !password || !email) return res.status(400).json({ error: 'First name, last name, password, and email are required' });
 
     const params = {
       ClientId: COGNITO_CONFIG.clientId,
@@ -367,8 +367,8 @@ router.post('/signup', async (req, res) => {
       Password: password,
       UserAttributes: [
         { Name: 'email', Value: email },
-        { Name: 'given_name', Value: username },
-        { Name: 'family_name', Value: username }
+        { Name: 'given_name', Value: firstName },
+        { Name: 'family_name', Value: lastName }
       ],
     };
 
