@@ -98,6 +98,7 @@ const makeZohoAPICall = async (url, method = 'GET', data = null, retryCount = 0,
     }
 
     console.log('Error response data:', JSON.stringify(error.response?.data, null, 2));
+    // return error
     throw error;
   }
 };
@@ -1113,336 +1114,225 @@ router.post("/create-account", authenticateToken, async (req, res) => {
 });
 
 router.post("/create/multiple-account", authenticateToken, async (req, res) => {
+  const createdAccounts = [];
+  const createdContacts = [];
+  const createdFolders = [];
+
+  const { accountData: accountDatas, userData } = req.body;
+
+  if (!Array.isArray(accountDatas) || accountDatas.length === 0) {
+    return res.status(400).json({
+      status: "error",
+      message: "No account data provided.",
+      errors: [{ field: "accountDatas", message: "You must provide at least one account entry." }],
+    });
+  }
+
+  // Helper: check local duplicates
+  const getLocalDuplicates = (items, field) => {
+    const map = new Map();
+    const duplicates = [];
+    for (const item of items) {
+      const key = item[field]?.trim().toLowerCase();
+      if (!key) continue;
+      if (map.has(key)) duplicates.push(item[field]);
+      else map.set(key, true);
+    }
+    return duplicates;
+  };
+
+  // Helper: check Zoho duplicates for a module and field
+  const checkZohoDuplicates = async (module, field, values) => {
+    const filteredValues = values.filter(v => v); // skip empty/undefined
+    if (!filteredValues.length) return [];
+
+    const results = await Promise.allSettled(
+      filteredValues.map((v) =>
+        makeZohoAPICall(
+          `${ZOHO_CONFIG.baseUrlCRM}/${module}/search?criteria=(${field}:equals:${encodeURIComponent(v.trim())})`,
+          "GET"
+        )
+      )
+    );
+
+    const duplicates = [];
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      const value = filteredValues[i];
+      if (result.status === "fulfilled" && result.value?.data?.length) duplicates.push(value);
+      else if (result.status === "rejected" && result.reason?.response?.status !== 204)
+        throw new Error(`Error verifying ${field} "${value}" in ${module}!`);
+    }
+    return duplicates;
+  };
+
+
+  // Helper: rollback created items
+  const rollback = async () => {
+    for (const contact of createdContacts) {
+      try { await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlCRM}/Contacts/${contact.id}`, "DELETE"); } catch (_) {}
+    }
+    for (const account of createdAccounts) {
+      try { await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlCRM}/Accounts/${account.id}`, "DELETE"); } catch (_) {}
+    }
+    if (createdFolders.length) {
+      const data = { data: createdFolders.map((id) => ({ attributes: { status: "51" }, id, type: "files" })) };
+      try { await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlWorkdrive}/files`, "PATCH", data, 0, true); } catch (_) {}
+    }
+  };
+
   try {
-    const {  accountData : accountDatas , userData  } = req.body;
-
-    if (!Array.isArray(accountDatas) || accountDatas.length === 0) {
+    // 1️⃣ Local duplicates check
+    const localAccountNames = getLocalDuplicates(accountDatas, "accountName");
+    if (localAccountNames.length)
       return res.status(400).json({
         status: "error",
-        message: "No account data provided.",
-        errors: [
-          {
-            field: "accountDatas",
-            message: "You must provide at least one account entry.",
-          },
-        ],
+        message: "Duplicate account names in request",
+        errors: localAccountNames.map((name) => ({ field: "accountName", message: `Account name "${name}" appears more than once.` })),
       });
-    }
 
-    // -----------------------------
-    // 1️⃣ Validate Required Fields
-    // -----------------------------
-    const missingFields = accountDatas
-      .filter((f) => !f.accountName || !f.accountType)
-      .map((f) => ({
-        name: f.accountName || "(missing name)",
-        message: "Both account name and account type are required.",
-      }));
-
-    if (missingFields.length > 0) {
+    const localAccountTins = getLocalDuplicates(accountDatas, "taxId");
+    if (localAccountTins.length)
       return res.status(400).json({
         status: "error",
-        message: "Missing required fields in one or more accounts.",
-        errors: missingFields,
+        message: "Duplicate TINs in request",
+        errors: localAccountTins.map((tin) => ({ field: "SSN", message: `TIN/SSN "${tin}" appears more than once.` })),
       });
-    }
 
-    // -----------------------------
-    // 2️⃣ Check Local Duplicates
-    // -----------------------------
-    const nameMap = new Map();
-    const localDuplicates = [];
-
-    for (const f of accountDatas) {
-      const nameKey = f.accountName.trim().toLowerCase();
-      if (nameMap.has(nameKey)) {
-        localDuplicates.push(f.accountName);
-      } else {
-        nameMap.set(nameKey, true);
-      }
-    }
-
-    if (localDuplicates.length > 0) {
+    const allContacts = accountDatas.flatMap(a => a.connectedContacts || []);
+    const localContactEmails = getLocalDuplicates(allContacts, "email");
+    if (localContactEmails.length)
       return res.status(400).json({
         status: "error",
-        message: "Duplicate account names found in your submission.",
-        errors: localDuplicates.map((name) => ({
-          field: "accountName",
-          message: `Account name "${name}" appears more than once.`,
-        })),
+        message: "Duplicate contact emails in request",
+        errors: localContactEmails.map((email) => ({ field: "email", message: `Email "${email}" appears more than once.` })),
       });
-    }
 
-    // -----------------------------
-    // 3️⃣ Check Zoho Account Duplicates
-    // -----------------------------
-    const zohoAccountChecks = await Promise.allSettled(
-      accountDatas.map((f) =>
-        makeZohoAPICall(
-          `${ZOHO_CONFIG.baseUrlCRM}/Accounts/search?criteria=(Account_Name:equals:${encodeURIComponent(
-            f.accountName.trim()
-          )})`,
-          "GET"
-        )
-      )
-    );
-
-    const existingAccounts = [];
-    for (let i = 0; i < zohoAccountChecks.length; i++) {
-      const result = zohoAccountChecks[i];
-      const accountName = accountDatas[i].accountName;
-
-      if (result.status === "fulfilled" && result.value?.data?.length) {
-        existingAccounts.push(accountName);
-      } else if (result.status === "rejected" && result.reason?.response?.status !== 204) {
-        return res.status(502).json({
-          status: "error",
-          message: "Error verifying accounts.",
-          errors: [
-            {
-              field: "zoho",
-              message: `lookup failed for account "${accountName}". Please try again.`,
-            },
-          ],
-        });
-      }
-    }
-
-    if (existingAccounts.length > 0) {
+    const localContactTins = getLocalDuplicates(allContacts, "taxId");
+    if (localContactTins.length)
       return res.status(400).json({
         status: "error",
-        message: "One or more accounts already exist!",
-        errors: existingAccounts.map((name) => ({
-          field: "accountName",
-          message: `Account "${name}" already exists!.`,
-        })),
+        message: "Duplicate contact TINs in request",
+        errors: localContactTins.map((tin) => ({ field: "SSN", message: `TIN/SSN "${tin}" appears more than once.` })),
       });
-    }
 
-    // -----------------------------
-    // 4️⃣ Prepare Contact List & Validate
-    // -----------------------------
-    const allContacts = [...accountDatas.flatMap((f) => f.connectedContacts || [])];
+    // 2️⃣ Zoho duplicates check separately
+    const [existingAccountNames, existingTins, existingContactEmails, existingContactTins] = await Promise.all([
+      checkZohoDuplicates("Accounts", "Account_Name", accountDatas.map(a => a.accountName)),
+      checkZohoDuplicates("Accounts", "TIN", accountDatas.map(a => a.taxId)),
+      checkZohoDuplicates("Contacts", "Email", allContacts.map(c => c.email)),
+      checkZohoDuplicates("Contacts", "EIN_Number", allContacts.map(c => c.ssn)),
+    ]);
 
-    // local duplicates (by email)
-    const emailMap = new Map();
-    const localContactDuplicates = [];
+    const errors = [];
+    if (existingAccountNames.length) errors.push(...existingAccountNames.map(name => ({ field: "accountName", message: `Account "${name}" already exists!` })));
+    if (existingTins.length) errors.push(...existingTins.map(tin => ({ field: "TIN", message: `In Accounts SSN/TIN "${tin}" already exists!` })));
+    if (existingContactEmails.length) errors.push(...existingContactEmails.map(email => ({ field: "email", message: `Contact with Email "${email}" already exists!` })));
+    if (existingContactTins.length) errors.push(...existingContactTins.map(tin => ({ field: "TIN", message: `In Contacts SSN "${tin}" already exists!` })));
 
-    for (const c of allContacts) {
-      const key = c.email.trim().toLowerCase();
-      if (emailMap.has(key)) localContactDuplicates.push(c.email);
-      else emailMap.set(key, true);
-    }
+    if (errors.length) return res.status(400).json({ status: "error", message: "Some duplicates exist", errors });
 
-    if (localContactDuplicates.length > 0) {
-      return res.status(400).json({
-        status: "error",
-        message: "Duplicate contact emails found in your submission.",
-        errors: localContactDuplicates.map((email) => ({
-          field: "email",
-          message: `Email "${email}" appears more than once.`,
-        })),
-      });
-    }
-
-    // -----------------------------
-    // 5️⃣ Check Zoho Contact Duplicates
-    // -----------------------------
-    const zohoContactChecks = await Promise.allSettled(
-      allContacts.map((c) =>
-        makeZohoAPICall(
-          `${ZOHO_CONFIG.baseUrlCRM}/Contacts/search?criteria=(Email:equals:${encodeURIComponent(
-            c.email.trim()
-          )})`,
-          "GET"
-        )
-      )
-    );
-
-    const existingContacts = [];
-    for (let i = 0; i < zohoContactChecks.length; i++) {
-      const result = zohoContactChecks[i];
-      const email = allContacts[i].email;
-      if (result.status === "fulfilled" && result.value?.data?.length) {
-        existingContacts.push(email);
-      } else if (result.status === "rejected" && result.reason?.response?.status !== 204) {
-        return res.status(502).json({
-          status: "error",
-          message: "Error verifying contacts in Zoho.",
-          errors: [
-            {
-              field: "email",
-              message: `Zoho lookup failed for contact "${email}". Please retry.`,
-            },
-          ],
-        });
-      }
-    }
-
-    if (existingContacts.length > 0) {
-      return res.status(400).json({
-        status: "error",
-        message: "One or more contacts already exist in Zoho CRM.",
-        errors: existingContacts.map((email) => ({
-          field: "email",
-          message: `Contact with email "${email}" already exists in Zoho.`,
-        })),
-      });
-    }
-
-    // -----------------------------
-    // ✅ 6️⃣ All Clear — Proceed to Create Accounts & Contacts
-    // -----------------------------
-    const createdAccounts = [];
-    const createdContacts = [];
-
+    // 3️⃣ Create Accounts & Workdrive Folders
     for (const accountData of accountDatas) {
-        // Create folder
-        const folder = await createFolder(
-          process.env.WORKDRIVE_PARENT_FOLDER_ID || "l0dnwed8da556672f4f6698fb16f1662271be",
-          accountData.accountName
-        );
+      const folder = await createFolder(process.env.WORKDRIVE_PARENT_FOLDER_ID || "l0dnwed8da556672f4f6698fb16f1662271be", accountData.accountName);
+      createdFolders.push(folder?.id);
 
-        const workdriveLink = folder?.attributes?.permalink || "";
-
-        // ✅ Use first contact for defaults
-        const firstContact = accountData.connectedContacts?.[0] || {};
-
-        const accountPayload = {
-          data: [
-            {
-              Owner: { id: "6791036000000558001" },
-              Account_Name: accountData.accountName || "",
-              Account_Type: accountData.accountType || "",
-              Description: accountData.description || "",
-              Client_Note: accountData.clientNote || "",
-              Phone_1:  accountData.phone1 || "",
-              Fax:  accountData.fax || "",
-              Client_ID: accountData.clientId || "",
-              Billing_Street:  accountData.billingStreet || "",
-              Billing_City:  accountData.billingCity || "",
-              Billing_State:  accountData.billingState || "",
-              Billing_Country:  accountData.billingCountry || "",
-              Billing_Code:  accountData.billingCode || "",
-              easyworkdriveforcrm__Workdrive_Folder_ID_EXT: workdriveLink,
-              Workdrive_Link: workdriveLink,
-              Ownership: accountData.trustee || "",
-              Compliance_Officer: accountData.complianceOfficer || "",
-              TIN : accountData.taxId || "",
-              Date_Created: accountData.dateCreated || "",
-              Trustee: accountData.trusteeName || "",
-              Account_Owner: accountData.accountOwner || "",
-              OpenCorp_Page: accountData.openCorpPage || "",
-            },
-          ],
-        };
-
-        const accountRes = await makeZohoAPICall(
-          `${ZOHO_CONFIG.baseUrlCRM}/Accounts`,
-          "POST",
-          accountPayload
-        );
-
-        const accountId = accountRes?.data?.[0]?.details?.id;
-        if (accountId) {
-          createdAccounts.push({
-            id: accountId,
-            name: accountData.accountName,
-            link: workdriveLink,
-          });
-        }
-      }
-
-
-    // Create contacts only after successful accounts
-    for (const contact of allContacts) {
-      const connectedAccounts = []
-      createdAccounts.map( a => {
-          connectedAccounts.push({
-              Connected_Accounts: {
-                module: "Accounts",
-                name: a?.name,
-                id: a?.id,
-              },
-            })
-      })
-
-      console.log("connectedAccounts" , connectedAccounts)
-      const contactPayload = {
-          data: [
-            {
-              Owner: { id: "6791036000000558001" },
-              Connected_Accounts: connectedAccounts,
-              Single_Line_1: contact.type == 'own' ? userData.username : "",
-              First_Name: contact.firstName || "",
-              Last_Name: contact.lastName || "",
-              Email: contact.email || "",
-              Contact_Type: contact.contactType || "Prospect",
-              Account_Type: contact.accountType || "Prospect",
-              Mailing_Street: contact.billingStreet || "",
-              Mailing_City: contact.billingCity || "",
-              Mailing_Code: contact.billingCode || "",
-              Mailing_State: contact.billingState || "",
-              Mailing_Zip: contact.billingZip || "",
-              Mailing_Country: contact.billingCountry || "",
-              Secondary_Email:contact.secondaryEmail || "",
-              Fax: contact.fax || "",
-              EIN_Number: contact.tin || "",
-              Important_Notes: contact.importantNotes || "",
-              Date_of_Birth: contact.dateOfBirth || "",
-              Phone: contact.phone || "",
-            },
-          ],
-          trigger: ["workflow"],
+      const accountPayload = {
+        data: [{
+          Owner: { id: "6791036000000558001" },
+          Account_Name: accountData.accountName,
+          Account_Type: accountData.accountType || "",
+          Description: accountData.description || "",
+          Client_Note: accountData.clientNote || "",
+          Phone_1: accountData.phone1 || "",
+          Fax: accountData.fax || "",
+          Billing_Street: accountData.billingStreet || "",
+          Billing_City: accountData.billingCity || "",
+          Billing_State: accountData.billingState || "",
+          Billing_Country: accountData.billingCountry || "",
+          Billing_Code: accountData.billingCode || "",
+          easyworkdriveforcrm__Workdrive_Folder_ID_EXT: folder?.attributes?.permalink,
+          Workdrive_Link: folder?.attributes?.permalink,
+          Ownership: accountData.trustee || "",
+          Compliance_Officer: accountData.complianceOfficer || "",
+          TIN: accountData.taxId || "",
+          Date_Created: accountData.dateCreated || "",
+          Trustee: accountData.trusteeName || "",
+          Account_Owner: accountData.accountOwner || "",
+          OpenCorp_Page: accountData.openCorpPage || "",
+        }],
       };
 
-      const contactRes = await makeZohoAPICall(
-        `${ZOHO_CONFIG.baseUrlCRM}/Contacts`,
-        "POST",
-        contactPayload
-      );
-
-      const contactId = contactRes?.data?.[0]?.details?.id;
-      if (contactId) createdContacts.push({ id: contactId, email: contact.email , firstName: contact.firstName , lastName: contact.lastName });
+      const accountRes = await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlCRM}/Accounts`, "POST", accountPayload);
+      const accountId = accountRes?.data?.[0]?.details?.id;
+      if (!accountId) throw new Error(accountRes);
+      createdAccounts.push({ id: accountId, name: accountData.accountName, link: folder?.attributes?.permalink || "" });
     }
 
+    // 4️⃣ Create Contacts
+    for (const contact of allContacts) {
+      const connectedAccounts = createdAccounts.map(a => ({ Connected_Accounts: { module: "Accounts", name: a.name, id: a.id } }));
+      const contactPayload = {
+        data: [{
+          Owner: { id: "6791036000000558001" },
+          Connected_Accounts: connectedAccounts,
+          Single_Line_1: contact.type == 'own' ? userData?.username : "",
+          First_Name: contact.firstName || "",
+          Last_Name: contact.lastName || "",
+          Email: contact.email || "",
+          Contact_Type: contact.contactType || "Prospect",
+          Mailing_Street: contact.billingStreet || "",
+          Mailing_City: contact.billingCity || "",
+          Mailing_Code: contact.billingCode || "",
+          Mailing_State: contact.billingState || "",
+          Mailing_Zip: contact.billingZip || "",
+          Mailing_Country: contact.billingCountry || "",
+          Secondary_Email: contact.secondaryEmail || "",
+          Fax: contact.fax || "",
+          EIN_Number: contact.ssn || "",
+          Important_Notes: contact.importantNotes || "",
+          Date_of_Birth: contact.dateOfBirth || "",
+          Phone: contact.phone || "",
+        }],
+        trigger: ["workflow"],
+      };
+
+      const contactRes = await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlCRM}/Contacts`, "POST", contactPayload);
+      const contactId = contactRes?.data?.[0]?.details?.id;
+      if (!contactId) throw new Error(`Failed to create contact "${contact.email}"`);
+      createdContacts.push({ id: contactId, email: contact.email });
+    }
+
+    // ✅ Success
     return res.status(200).json({
       status: "success",
       message: "All accounts and contacts created successfully.",
-      // data: {
-      //   accounts: [
-      //     {
-      //       id : "3435555", 
-      //       "name": "aamish test"
-      //     },
-      //     {
-      //       id : "43453", 
-      //       "name": "sh test"
-      //     }
-      //   ] ,
-      //   contacts: [],
-      // },
-
-      data: {
-        accounts: createdAccounts,
-        contacts: createdContacts,
-      },
-
+      data: { accounts: createdAccounts, contacts: createdContacts },
     });
+
   } catch (err) {
-    console.error("Error creating account:", err.message);
+    console.error("Error creating accounts/contacts:", err);
+    await rollback();
+
+    // Handle Zoho validation errors
+    const errors = [];
+    if (err.response?.data?.errors) {
+      err.response.data.errors.forEach(e => {
+        if (Array.isArray(e.error)) e.error.forEach(subErr => errors.push({ field: subErr.details?.json_path || e.field || "server", message: subErr.message || e.message || "Unknown error", error: subErr }));
+        else errors.push({ field: e.field || "server", message: e.message || "Unknown error", error: e.error || e });
+      });
+    } else {
+      errors.push({ field: "server", message: err.message || "Unknown error", error: err.response?.data?.data || err });
+    }
+
     return res.status(500).json({
       status: "error",
-      message: "Unexpected server error occurred.",
-      errors: [
-        {
-          field: "server",
-          message: err.message || "Internal Server Error",
-        },
-      ],
+      message: "Failed to create accounts/contacts. All created records have been rolled back.",
+      errors,
     });
   }
 });
+
 
 router.post("/prospect/upload/files", authenticateToken, upload.array("files"), async (req, res) => {
   try {
