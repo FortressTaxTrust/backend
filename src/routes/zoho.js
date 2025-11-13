@@ -1316,19 +1316,19 @@ router.post("/create/multiple-account", authenticateToken, async (req, res) => {
               Account_Type: accountData.accountType || "",
               Description: accountData.description || "",
               Client_Note: accountData.clientNote || "",
-              Phone_1: firstContact.phone || accountData.phone1 || "",
-              Fax: firstContact.fax || accountData.fax || "",
+              Phone_1:  accountData.phone1 || "",
+              Fax:  accountData.fax || "",
               Client_ID: accountData.clientId || "",
-              Billing_Street: firstContact.billingStreet || accountData.billingStreet || "",
-              Billing_City: firstContact.billingCity || accountData.billingCity || "",
-              Billing_State: firstContact.billingState || accountData.billingState || "",
-              Billing_Country: firstContact.billingCountry || accountData.billingCountry || "",
-              Billing_Code: firstContact.billingCode || accountData.billingCode || "",
+              Billing_Street:  accountData.billingStreet || "",
+              Billing_City:  accountData.billingCity || "",
+              Billing_State:  accountData.billingState || "",
+              Billing_Country:  accountData.billingCountry || "",
+              Billing_Code:  accountData.billingCode || "",
               easyworkdriveforcrm__Workdrive_Folder_ID_EXT: workdriveLink,
               Workdrive_Link: workdriveLink,
               Ownership: accountData.trustee || "",
               Compliance_Officer: accountData.complianceOfficer || "",
-              TIN : firstContact.tin || accountData.taxId || "",
+              TIN : accountData.taxId || "",
               Date_Created: accountData.dateCreated || "",
               Trustee: accountData.trusteeName || "",
               Account_Owner: accountData.accountOwner || "",
@@ -1409,10 +1409,25 @@ router.post("/create/multiple-account", authenticateToken, async (req, res) => {
     return res.status(200).json({
       status: "success",
       message: "All accounts and contacts created successfully.",
+      // data: {
+      //   accounts: [
+      //     {
+      //       id : "3435555", 
+      //       "name": "aamish test"
+      //     },
+      //     {
+      //       id : "43453", 
+      //       "name": "sh test"
+      //     }
+      //   ] ,
+      //   contacts: [],
+      // },
+
       data: {
         accounts: createdAccounts,
         contacts: createdContacts,
       },
+
     });
   } catch (err) {
     console.error("Error creating account:", err.message);
@@ -1497,6 +1512,7 @@ router.post("/prospect/upload/files", authenticateToken, upload.array("files"), 
     });
   }
 });
+
 
 // Create a new Contact linked to an existing Account
 router.post('/create-contact', async (req, res) => {
