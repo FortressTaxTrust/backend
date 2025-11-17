@@ -6,6 +6,7 @@ import { testRouter } from './routes/test.js';
 import authRouter from './routes/auth.js';
 import zohoRouter from './routes/zoho.js';
 import aiRouter from './routes/ai.js';
+import mailRouter from "./routes/contactus.js";
 
 // Load environment variables
 dotenv.config();
@@ -102,6 +103,7 @@ app.use('/test', testRouter);
 app.use('/auth', authRouter);
 app.use('/zoho', zohoRouter);
 app.use('/ai', aiRouter);
+app.use('/contactus', mailRouter)
 
 // Error handling middleware
 app.use((err, req, res, next) => {
