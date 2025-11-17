@@ -9,7 +9,7 @@ const router = Router();
  */
 router.post("/", async (req, res) => {
   try {
-    const { email, firstName, lastName, description = "", phone = "" } = req.body;
+    const { email, firstName, lastName, description = "", number = "" } = req.body;
 
     // Validate required fields
     const missingFields = [];
@@ -32,7 +32,7 @@ router.post("/", async (req, res) => {
         <h3>New Contact Form Submission</h3>
         <p><b>Name:</b> ${firstName} ${lastName}</p>
         <p><b>Email:</b> ${email}</p>
-        ${phone ? `<p><b>Phone:</b> ${phone}</p>` : ""}
+        ${number ? `<p><b>Phone:</b> ${number}</p>` : ""}
         ${description ? `<p><b>Message:</b></p><p>${description}</p>` : ""}
       `
     };
