@@ -26,7 +26,7 @@ router.post("/", async (req, res) => {
 
     // Email to admin
     const adminEmailData = {
-      to: process.env.CONTACT_EMAIL || "admin@fortresstaxandtrust.com",
+      to: process.env.SMTP_USER,
       subject: `New Contact Inquiry from ${firstName} ${lastName}`,
       html: `
         <h3>New Contact Form Submission</h3>
