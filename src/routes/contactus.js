@@ -40,7 +40,7 @@ router.post("/", async (req, res) => {
           
           <div style="text-align:center; margin-bottom:20px;">
             <!-- Logo Section with Image -->
-            <img src="https://fortresstaxandtrust.com/uploads/Logo.svg" 
+            <img src="/uploads/Logo.svg" 
                 alt="Fortress Tax and Trust Logo" 
                 style="width:160px;"/>
           </div>
@@ -81,7 +81,7 @@ router.post("/", async (req, res) => {
           
           <div style="text-align:center; margin-bottom:20px;">
             <!-- Logo Section with Image -->
-            <img src="https://fortresstaxandtrust.com/uploads/Logo.svg" 
+            <img src="/uploads/Logo.svg" 
                 alt="Fortress Tax and Trust Logo" 
                 style="width:160px;"/>
           </div>
