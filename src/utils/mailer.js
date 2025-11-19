@@ -24,7 +24,7 @@ transporter.verify((error, success) => {
 
 export const sendMail = async ({ to, subject, html, text }) => {
   return await transporter.sendMail({
-    from: process.env.MAIL_FROM,
+    from: process.env.SMTP_USER,
     to,
     subject,
     text,
