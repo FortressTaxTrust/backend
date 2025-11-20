@@ -18,6 +18,7 @@ import {
   GlobalSignOutCommand,
   ChangePasswordCommand
 } from '@aws-sdk/client-cognito-identity-provider';
+import PgHelper from '../utils/pgHelpers.js';
 
 dotenv.config();
 
@@ -361,6 +362,7 @@ router.post('/signup', async (req, res) => {
     const { firstName, lastName, password, email } = req.body || {};
     if (!firstName || !lastName || !password || !email) return res.status(400).json({ error: 'First name, last name, password, and email are required' });
 
+    const existingUser = await PgHelper.select("users", { email , enabled : true });
     const params = {
       ClientId: COGNITO_CONFIG.clientId,
       Username: email,
@@ -376,6 +378,19 @@ router.post('/signup', async (req, res) => {
     if (secretHash) params.SecretHash = secretHash;
 
     const r = await cognitoClient.send(new SignUpCommand(params));
+
+    if (!existingUser || existingUser.length == 0) {
+      const userType = await PgHelper.select("user_type" , { type : "prospect"})
+      await PgHelper.insert("users", {
+        email,
+        first_name: firstName,
+        last_name: lastName,
+        cognito_id: r.UserSub,
+        user_type_id: userType?.id,
+        confirmation_status : "not-confirmed",
+        enabled: true,
+      });
+    }
     return res.json({
       status: 'success',
       message: 'User registered successfully. Please check your email for verification code.',
@@ -402,6 +417,11 @@ router.post('/confirm-signup', async (req, res) => {
     if (secretHash) params.SecretHash = secretHash;
 
     await cognitoClient.send(new ConfirmSignUpCommand(params));
+    console.log("username" , username)
+    const existingUser = await PgHelper.select("users", { email: username });
+    console.log("existing" , existingUser)
+    if (existingUser && existingUser.length > 0) await PgHelper.update("users",{  confirmation_status: "confirmed",  updated_at: new Date()},{ id: existingUser[0].id });
+
     return res.json({ status: 'success', message: 'User confirmed successfully' });
   } catch (error) {
     console.error('Confirm signup error:', { name: error.name, message: error.message });

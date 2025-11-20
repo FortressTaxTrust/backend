@@ -261,34 +261,6 @@ Respond with ONLY a JSON object in this exact format:
   }
 });
 
-const allowedMimeTypes = [
-  // images
-  "image/png",
-  "image/jpeg",
-  "image/jpg",
-  "image/gif",
-  "image/webp",
-  // documents
-  "application/pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "application/vnd.ms-powerpoint",
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  // text
-  "text/plain",
-  "text/markdown",
-  "text/csv",
-  "application/json",
-];
-
-// function bufferToStream(buffer) {
-//   const stream = new Readable();
-//   stream.push(buffer);
-//   stream.push(null);
-//   return stream;
-// }
 
 // files from form data and multer then upload file to ask open ai for each file
 router.post(

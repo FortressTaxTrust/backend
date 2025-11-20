@@ -34,6 +34,9 @@ CREATE TABLE users (
     mailing_state TEXT,
     mailing_zip TEXT,
     mailing_country TEXT,
+    signup TEXT DEFAULT 'incomplete' NOT NULL,
+    confirmation_status TEXT DEFAULT 'not-confirmed' NOT NULL,
+    signup_draft JSON, 
     enabled BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
@@ -143,3 +146,5 @@ CREATE TABLE document_upload_logs (
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
+INSERT INTO user_type (type, enabled) VALUES ('prospect', TRUE), ('client', TRUE);
+INSERT INTO subscription (square_plan_id,name,price,duration_days,metadata,enabled) VALUES (NULL,'Free',0.00,NULL,'{}'::json,TRUE);
