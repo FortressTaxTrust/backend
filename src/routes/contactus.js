@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { sendMail } from "../utils/mailer.js";
+import db from "../adapter/pgsql.js"
 
 const router = Router();
 
@@ -38,12 +39,6 @@ router.post("/", async (req, res) => {
       <div style="font-family: Arial, sans-serif; background:#f7f7f7; padding:20px;">
         <div style="max-width:600px; margin:auto; background:#ffffff; padding:25px; border-radius:8px; border:1px solid #e1e1e1;">
           
-          <div style="text-align:center; margin-bottom:20px;">
-            <!-- Logo Section with Image -->
-            <img src="https://www.fortresstaxandtrust.com/images/Logo.svg" 
-                alt="Fortress Tax and Trust Logo" 
-                style="width:160px;"/>
-          </div>
 
           <h2 style="color:#333;">New Contact Form Submission</h2>
 
@@ -79,12 +74,6 @@ router.post("/", async (req, res) => {
       <div style="font-family: Arial, sans-serif; background:#f7f7f7; padding:20px;">
         <div style="max-width:600px; margin:auto; background:#ffffff; padding:25px; border-radius:8px; border:1px solid #e1e1e1;">
           
-          <div style="text-align:center; margin-bottom:20px;">
-            <!-- Logo Section with Image -->
-            <img src="https://www.fortresstaxandtrust.com/images/Logo.svg" 
-                alt="Fortress Tax and Trust Logo" 
-                style="width:160px;"/>
-          </div>
 
           <p>Hello <b>${firstName}</b>,</p>
 
@@ -130,6 +119,15 @@ router.post("/", async (req, res) => {
       message: "Something went wrong while processing your request.",
       error: err.message || "Unknown error",
     });
+  }
+});
+
+router.get('/testing', async (req, res) => {
+  try {
+    const users = await db.any('SELECT * FROM users');
+    res.json({ users });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

@@ -7,8 +7,7 @@ import authRouter from './routes/auth.js';
 import zohoRouter from './routes/zoho.js';
 import aiRouter from './routes/ai.js';
 import mailRouter from "./routes/contactus.js";
-import  path from 'path';
-import url from 'url';
+import { startScheduler } from './scheduler/cron.js';
 
 // Load environment variables
 dotenv.config();
@@ -53,11 +52,6 @@ app.get('/health', (_req, res) => res.status(200).send('OK'));
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Serve static files from the 'uploads' folder
-const __filename = url.fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Root route
 app.get('/', (req, res) => {
@@ -129,6 +123,7 @@ app.use((err, req, res, next) => {
 
 // Start server
 app.listen(port, () => {
+  startScheduler()
   console.log(`🚀 Server is running on port ${port}`);
   console.log(`🏥 Health check available at: http://localhost:${port}/health`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
