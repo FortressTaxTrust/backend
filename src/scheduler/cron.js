@@ -277,6 +277,6 @@ export const startScheduler = () => {
 	};
 
 	threeHrCron()
-	// cron.schedule("0 0,12 * * *", threeHrCron);
+	cron.schedule("0 0,12 * * *", threeHrCron);
 
 };
