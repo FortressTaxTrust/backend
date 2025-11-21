@@ -1,6 +1,9 @@
 import { S3Client, PutObjectCommand,GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
 import multer from 'multer';
 import { PassThrough } from 'stream';
+import { v4 as uuidv4 } from "uuid";
 
 // AWS S3 configuration
 const s3 = new S3Client({
@@ -131,4 +134,27 @@ const uploadToS3 = async (req, res, next) => {
   }
 };
 
-export { uploadToS3, multiFileUpload , getFileFromS3};
+const getPresignedUrl = async (fileName , fileType) => {
+  // const safeFileName = fileName.replace(/[^a-zA-Z0-9_\-\.]/g, "_");
+  const key = `${fileName}`;
+
+  const command = new PutObjectCommand({
+    Bucket: process.env.AWS_S3_BUCKET_NAME,
+    Key: key,
+    ContentType: fileType,
+  });
+
+  const url = await getSignedUrl(s3, command, { expiresIn: 60 * 5 }); 
+  return { presignedUrl: url, key };
+};
+
+const getMultiplePresignedUrls = async (files) => {
+  const results = [];
+  for (const file of files) {
+    const urlData = await getPresignedUrl(file.name, file.type);
+    results.push(urlData);
+  }
+  return results;
+};
+
+export { uploadToS3, multiFileUpload , getFileFromS3 , getMultiplePresignedUrls , getPresignedUrl};

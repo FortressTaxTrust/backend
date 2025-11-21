@@ -148,3 +148,14 @@ CREATE TABLE document_upload_logs (
 );
 INSERT INTO user_type (type, enabled) VALUES ('prospect', TRUE), ('client', TRUE);
 INSERT INTO subscription (square_plan_id,name,price,duration_days,metadata,enabled) VALUES (NULL,'Free',0.00,NULL,'{}'::json,TRUE);
+ALTER TABLE accounts ALTER COLUMN user_id DROP NOT NULL;
+CREATE TABLE accounts_users (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    permissions JSONB,
+    enabled BOOLEAN DEFAULT TRUE NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+    UNIQUE (user_id, account_id)
+);

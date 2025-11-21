@@ -3,7 +3,7 @@ import OpenAI, { toFile } from "openai";
 import dotenv from "dotenv";
 import { authenticateToken } from "../middleware/auth.js";
 import { getFolderByName,createFolder,uploadFile,getWorkDrive} from './zoho.js';
-import { uploadToS3, multiFileUpload ,getFileFromS3} from "../middleware/s3.js";
+import { uploadToS3, multiFileUpload,getMultiplePresignedUrls} from "../middleware/s3.js";
 import  PgHelper  from "../utils/pgHelpers.js"
 
 // Load environment variables
@@ -314,6 +314,21 @@ router.post(
 );
 
 
+router.post("/get-presigned-urls", async (req, res) => {
+  try {
+    const { files } = req.body;
+    if (!files || !Array.isArray(files) || !files.length) {
+      return res.status(400).json({ message: "No files provided" });
+    }
+
+    const presignedData = await getMultiplePresignedUrls(files);
+
+    res.json(presignedData);
+  } catch (error ) {
+    console.error(error);
+    res.status(500).json({ message: error.message || "Failed to generate presigned URLs" });
+  }
+});
 // router.post(
 //   "/analyze-files/",
 //   authenticateToken,
