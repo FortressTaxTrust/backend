@@ -67,12 +67,37 @@ eb health
 eb logs
 ```
 
+## Nginx Configuration
+
+The project includes a custom nginx configuration at `.platform/nginx/conf.d/custom.conf` that:
+- Sets client body size limit to 200MB (matching Express app limits)
+- Configures extended timeouts for large file uploads
+- Sets proper proxy headers
+
+**The `.platform` folder is automatically included in deployments** - no manual upload needed. Just deploy normally with `eb deploy`.
+
+### Alternative: Manual Upload (if needed)
+
+If you need to update nginx config without a full deployment:
+
+1. **Zip the .platform folder:**
+   ```bash
+   zip -r .platform.zip .platform/
+   ```
+
+2. **Upload via AWS Console:**
+   - Go to Elastic Beanstalk → Your Environment → Configuration
+   - Under "Platform", click "Edit"
+   - Upload the `.platform.zip` file
+   - Save and apply
+
 ## Important Notes
 
 - **Port**: Elastic Beanstalk expects your app to listen on port 8081 (or the port specified in PORT env var)
 - **Health Check**: Your `/health` endpoint will be used by Elastic Beanstalk for health checks
 - **Environment Variables**: All sensitive data should be set via Elastic Beanstalk environment variables, not in code
 - **CORS**: Update `ALLOWED_ORIGINS` to match your frontend domain in production
+- **Nginx Config**: The `.platform` folder is included in deployments automatically
 
 ## Troubleshooting
 
