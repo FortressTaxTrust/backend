@@ -1266,7 +1266,7 @@ router.post("/create/multiple-account", authenticateToken, async (req, res) => {
       const accountRes = await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlCRM}/Accounts`, "POST", accountPayload);
       const accountId = accountRes?.data?.[0]?.details?.id;
       if (!accountId) throw new Error(accountRes);
-      createdAccounts.push({ id: accountId, name: accountData.accountName, link: folder?.attributes?.permalink || "" });
+      createdAccounts.push({ id: accountId, accountType : accountData.accountType, name: accountData.accountName, link: folder?.attributes?.permalink || "" });
     }
 
     // 4️⃣ Create Contacts
