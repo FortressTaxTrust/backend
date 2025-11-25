@@ -154,4 +154,19 @@ export const authenticateToken = async (req, res, next) => {
     }
     return res.status(403).json({ error: 'Authentication failed', message });
   }
+
+};
+
+export const adminAuth = (req, res, next) => {
+  const userAdmin = req.user?.username;
+
+  if (userAdmin && userAdmin === process.env.ADMIN_USER_SUB) {
+    req.user.role = "admin";
+    return next();
+  }
+  
+  return res.status(401).json({
+    error: "Unauthorized",
+    message: "You do not have permission to access this resource",
+  });
 };

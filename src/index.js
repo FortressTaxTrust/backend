@@ -8,6 +8,7 @@ import zohoRouter from './routes/zoho.js';
 import aiRouter from './routes/ai.js';
 import mailRouter from "./routes/contactus.js";
 import { startScheduler } from './scheduler/cron.js';
+import adminRouter from "./routes/admin.js"
 
 // Load environment variables
 dotenv.config();
@@ -106,6 +107,7 @@ app.use('/auth', authRouter);
 app.use('/zoho', zohoRouter);
 app.use('/ai', aiRouter);
 app.use('/contactus', mailRouter)
+app.use ("/admin" , adminRouter)
 
 // Error handling middleware
 app.use((err, req, res, next) => {
