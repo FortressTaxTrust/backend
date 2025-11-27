@@ -159,3 +159,51 @@ CREATE TABLE accounts_users (
     updated_at TIMESTAMPTZ DEFAULT now() NOT NULL,
     UNIQUE (user_id, account_id)
 );
+
+ALTER TABLE user_subscription ADD COLUMN cancel_at_period_end BOOLEAN DEFAULT FALSE NOT NULL, ADD COLUMN no_expiry BOOLEAN DEFAULT FALSE, ADD COLUMN last_payment_status TEXT NULL, ADD COLUMN last_payment_at TIMESTAMPTZ NULL;
+
+CREATE TABLE IF NOT EXISTS square_customers (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+    square_customer_id TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+    UNIQUE (user_id, square_customer_id)
+);
+CREATE TABLE IF NOT EXISTS payments (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT REFERENCES users(id),
+    square_payment_id TEXT UNIQUE,
+    amount NUMERIC(12,2),
+    currency CHAR(3),
+    status TEXT,
+    raw_payload JSONB,
+    created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS webhook_events (
+    id BIGSERIAL PRIMARY KEY,
+    event_type TEXT,
+    square_entity_id TEXT,
+    payload JSONB,
+    received_at TIMESTAMPTZ DEFAULT now(),
+    created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_square_customers_user_id ON square_customers(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_subscription_square_id ON user_subscription(square_subscription_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_events_type ON webhook_events(event_type);
+CREATE TABLE payment_methods (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  square_card_id TEXT NOT NULL, 
+  last_4 TEXT,
+  brand TEXT,
+  exp_month INTEGER,
+  exp_year INTEGER,
+  is_default BOOLEAN DEFAULT FALSE,
+  metadata JSONB NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
