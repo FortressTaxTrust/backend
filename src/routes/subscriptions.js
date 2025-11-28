@@ -1,15 +1,17 @@
 import { Router } from "express";
 import db from "../adapter/pgsql.js";
 import { authenticateToken, adminAuth } from "../middleware/auth.js";
-import { SquareClient, SquareEnvironment } from "square";
+import { SquareClient, SquareEnvironment ,WebhooksHelper} from "square";
 import PgHelper from "../utils/pgHelpers.js";
 import { v4 as uuidv4 } from 'uuid';
 const router = Router();
 
+const TEMPLATE_ID = process.env.TEMPLATE_ID || '2GZV2X2HZP4NGA54VWRG65DR';
+const SQUARE_APPLICATION_ID  = process.env.SQUARE_APPLICATION_ID  || 'sandbox-sq0idb-WLCH0T6HqX99kU9mkf_xgw'
 const LOCATION_ID = process.env.SQUARE_LOCATION_ID || "L4JMPB8E5HHBY"
 const TOKEN = process.env.SQUARE_TOKEN || "EAAAlyl8GiGpOaCG4CgyJCD0xhFDtGjlRA3TySBTwDT4UCSb9og4e7PjsqEZv_wO"
-const SIGNATURE_KEY = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY;
-const NOTIFICATION_URL = process.env.SQUARE_WEBHOOK_NOTIFICATION_URL;
+const SIGNATURE_KEY = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY || '02K1wztoD8KmpCAxX1bwTQ';
+const NOTIFICATION_URL = process.env.SQUARE_WEBHOOK_NOTIFICATION_URL ;
 
 const squareClient = new SquareClient({
 		environment: SquareEnvironment.Sandbox,
@@ -19,7 +21,7 @@ const squareClient = new SquareClient({
 const subscriptionsApi = squareClient.subscriptions;
 const customersApi = squareClient.customers;
 const paymentsApi = squareClient.payments;
-const cardsApi = squareClient.cards || null; // may or may not be available depending on SDK version
+const cardsApi = squareClient.cards || null; 
 
 async function ensureSquareCustomerForUser(userId) {
 	const existing = await db.oneOrNone('SELECT square_customer_id FROM square_customers WHERE user_id=$1 LIMIT 1', [userId]);
@@ -55,7 +57,7 @@ async function ensureSquareCustomerForUser(userId) {
 		 no_expiry (boolean)   -- optional
 	 }
 */
-router.post('/square/create-subscription',authenticateToken, async (req, res) => {
+router.post('/square/create-subscription', async (req, res) => {
 	try {
 		const { user_id, subscription_id, card_id, square_customer_id, start_date, no_expiry } = req.body;
 		if (!user_id || !subscription_id) return res.status(400).json({ status: "error", message:'user_id & subscription_id required' });
@@ -81,15 +83,29 @@ router.post('/square/create-subscription',authenticateToken, async (req, res) =>
 			const body = {
 				idempotencyKey: uuidv4(),
 				locationId: LOCATION_ID,
-				planVariationId: tier.square_plan_id,
 				customerId: sqCustId,
-				startDate: start_date || undefined,
 				cardId: card_id,
-				canceledDate: "",
-				monthlyBillingAnchorDate: 1,
-				timezone: "US",
+ 				planVariationId: tier.square_plan_id,
+				monthlyBillingAnchorDate : 1,
+				phases: [
+					{
+					ordinal: BigInt("1"),
+					orderTemplateId: '2GZV2X2HZP4NGA54VWRG65DR',
+					pricing: {
+						type: "RELATIVE",
+						priceAdjustment: {
+						type: "FIXED_PERCENTAGE",
+						percentage: "0"
+						}
+					}
+					}
+				],
+
+				startDate: start_date || undefined,
+				timezone: "UTC"
 			};
 
+			
 			const sqResp = await subscriptionsApi.create(body);
 			const createdSub = sqResp.subscription;
 			if (!createdSub) throw new Error('Square subscription creation failed');
@@ -119,12 +135,12 @@ router.post('/square/create-subscription',authenticateToken, async (req, res) =>
 		}
 	} catch (err) {
 		console.error('create-subscription error', err);
-		res.status(500).json({ status :  "error" , error: err.message || 'server error' });
+		res.status(500).json({ status :  "error" , message : err.message || 'server error' });
 	}
 });
 
 
-router.post('/square/save-card',authenticateToken, async (req, res) => {
+router.post('/square/save-card', async (req, res) => {
 	try {
 		const { user_id, square_customer_id, source_id ,card_information} = req.body;
 		if (!source_id) return res.status(400).json({ status: "error", message: 'source_id is required' });
@@ -170,10 +186,10 @@ router.post('/square/save-card',authenticateToken, async (req, res) => {
 	}
 });
 
-router.post('/square/cancel-subscription',authenticateToken, async (req, res) => {
+router.post('/square/cancel-subscription', async (req, res) => {
 	try {
 		const { square_subscription_id, cancel_at_period_end } = req.body;
-		if (!square_subscription_id) return res.status(400).json({ error: 'square_subscription_id required' });
+		if (!square_subscription_id) return res.status(400).json({status: "error", message: 'square_subscription_id required' });
 
 		if (cancel_at_period_end) {
 			await db.none(`UPDATE user_subscription SET cancel_at_period_end = true, updated_at = now() WHERE square_subscription_id = $1`, [square_subscription_id]);
