@@ -1,40 +1,68 @@
 // src/tests/subscriptions.test.js
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import request from 'supertest';
-import app from '../app.js';
-import db from '../adapter/pgsql.js';
-import { SquareClient } from 'square';
 
-// Mock the db and square client
-jest.mock('../adapter/pgsql.js');
-jest.mock('square');
+// Define mocks outside factory
+const mockDb = {
+  __esModule: true,
+  default: {
+    any: jest.fn(),
+    one: jest.fn(),
+    oneOrNone: jest.fn(),
+    none: jest.fn(),
+    many: jest.fn(),
+  },
+  pgp: {
+    helpers: {
+      insert: jest.fn(),
+      update: jest.fn(),
+      ColumnSet: jest.fn(),
+    },
+    as: {
+      format: jest.fn(),
+      value: jest.fn(),
+    }
+  }
+};
+
+const mockSubscriptionsApi = {
+  create: jest.fn(),
+  cancel: jest.fn(),
+};
+const mockCustomersApi = {
+  create: jest.fn(),
+};
+const mockCardsApi = {
+  create: jest.fn(),
+};
+
+const MockSquareClient = jest.fn(() => ({
+  subscriptions: mockSubscriptionsApi,
+  customers: mockCustomersApi,
+  cards: mockCardsApi,
+}));
+
+const mockSquare = {
+  __esModule: true,
+  SquareClient: MockSquareClient,
+  SquareEnvironment: { Sandbox: 'sandbox' },
+  WebhooksHelper: {
+    verifySignature: jest.fn().mockResolvedValue(true),
+  },
+};
+
+// Mock modules
+jest.unstable_mockModule('../adapter/pgsql.js', () => mockDb);
+jest.unstable_mockModule('square', () => mockSquare);
+
+// Dynamic imports
+const { default: app } = await import('../app.js');
+const { default: db } = await import('../adapter/pgsql.js');
+const { default: request } = await import('supertest');
 
 describe('Subscription Routes', () => {
-  let mockSubscriptionsApi;
-  let mockCustomersApi;
-  let mockCardsApi;
 
   beforeEach(() => {
     jest.clearAllMocks();
-
-    // Setup mock APIs
-    mockSubscriptionsApi = {
-      create: jest.fn(),
-      cancel: jest.fn(),
-    };
-    mockCustomersApi = {
-      create: jest.fn(),
-    };
-    mockCardsApi = {
-      create: jest.fn(),
-    };
-
-    // Mock the SquareClient constructor
-    SquareClient.mockImplementation(() => ({
-      subscriptions: mockSubscriptionsApi,
-      customers: mockCustomersApi,
-      cards: mockCardsApi,
-    }));
   });
 
   afterEach(() => {
@@ -50,10 +78,10 @@ describe('Subscription Routes', () => {
       db.any.mockResolvedValueOnce([]); // ensureSquareCustomerForUser
 
       mockCustomersApi.create.mockResolvedValue({
-        result: { customer: { id: 'sq-customer-id' } },
+        customer: { id: 'sq-customer-id' },
       });
       mockSubscriptionsApi.create.mockResolvedValue({
-        result: { subscription: { id: 'sq-sub-id', status: 'active' } },
+        subscription: { id: 'sq-sub-id', status: 'active' },
       });
 
       db.oneOrNone.mockResolvedValueOnce({ id: 'new-sub-id' }); // DB insert
@@ -86,10 +114,10 @@ describe('Subscription Routes', () => {
         .mockResolvedValueOnce(null) // check if customer exists
         .mockResolvedValueOnce({ id: 1, email: 'test@test.com' }); // user
       mockCustomersApi.create.mockResolvedValue({
-        result: { customer: { id: 'sq-customer-id' } },
+        customer: { id: 'sq-customer-id' },
       });
       mockCardsApi.create.mockResolvedValue({
-        result: { card: { id: 'card-id' } },
+        card: { id: 'card-id' },
       });
       db.none.mockResolvedValueOnce(null); // DB save
 

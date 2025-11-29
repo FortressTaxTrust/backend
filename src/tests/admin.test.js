@@ -1,26 +1,65 @@
 // src/tests/admin/casestudies.test.js
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import request from 'supertest';
-import app from '../app.js';
-import db from '../adapter/pgsql.js';
-import PgHelper from '../utils/pgHelpers.js';
-import * as authMiddleware from '../middleware/auth.js';
+
+// Define mocks outside factory to ensure singleton
+const mockDb = {
+  __esModule: true,
+  default: {
+    any: jest.fn(),
+    one: jest.fn(),
+    oneOrNone: jest.fn(),
+    none: jest.fn(),
+    many: jest.fn(),
+  },
+  pgp: {
+    helpers: {
+      insert: jest.fn(),
+      update: jest.fn(),
+      ColumnSet: jest.fn(),
+    },
+    as: {
+      format: jest.fn(),
+      value: jest.fn(),
+    }
+  }
+};
+
+const mockPgHelper = {
+  __esModule: true,
+  default: {
+    insert: jest.fn(),
+    insertMany: jest.fn(),
+    update: jest.fn(),
+    select: jest.fn(),
+    raw: jest.fn(),
+  }
+};
+
+const mockAuthMiddleware = {
+  authenticateToken: jest.fn((req, res, next) => next()),
+  adminAuth: jest.fn((req, res, next) => next()),
+};
 
 // Mock DB and helper functions
-jest.mock('../adapter/pgsql.js');
-jest.mock('../utils/pgHelpers.js');
+jest.unstable_mockModule('../adapter/pgsql.js', () => mockDb);
+jest.unstable_mockModule('../utils/pgHelpers.js', () => mockPgHelper);
+jest.unstable_mockModule('../middleware/auth.js', () => mockAuthMiddleware);
+
+// Dynamic imports after mocks
+const { default: app } = await import('../app.js');
+const { default: db } = await import('../adapter/pgsql.js');
+const { default: PgHelper } = await import('../utils/pgHelpers.js');
+const { default: request } = await import('supertest');
 
 describe('Admin Routes', () => {
 
   beforeEach(() => {
-    // Mock middleware per test
-    jest.spyOn(authMiddleware, 'authenticateToken').mockImplementation((req, res, next) => next());
-    jest.spyOn(authMiddleware, 'adminAuth').mockImplementation((req, res, next) => next());
+    // Clear mocks before each test
+    jest.clearAllMocks();
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
-    jest.clearAllMocks();
   });
 
   // ================= GET /admin/casestudies =================
@@ -28,7 +67,10 @@ describe('Admin Routes', () => {
     it('should return a list of case studies', async () => {
       const mockCaseStudies = [{ id: 1, title: 'Case Study 1' }];
       db.any.mockResolvedValue(mockCaseStudies);
-      db.one.mockResolvedValue({ count: 1 });
+      db.one.mockImplementation(async (query, values, cb) => {
+        const result = { count: 1 };
+        return cb ? cb(result) : result;
+      });
 
       const res = await request(app).get('/admin/casestudies');
 

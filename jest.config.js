@@ -16,5 +16,6 @@ export default {
   injectGlobals: true,
   setupFiles: ['<rootDir>/src/tests/testEnv.js'],
   testTimeout: 30000,
-  maxWorkers: 1
+  maxWorkers: 1,
+  transform: {}
 };

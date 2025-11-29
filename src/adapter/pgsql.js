@@ -13,7 +13,7 @@ const initOptions = {
 const pgp = pgPromise(initOptions);
 
 monitor.attach(initOptions);
-monitor.setTheme('matrix'); 
+monitor.setTheme('matrix');
 
 const dbConfig = {
   host: process.env.PG_HOST || 'localhost',
@@ -27,11 +27,12 @@ const dbConfig = {
 const db = pgp(dbConfig);
 
 // Test connection
-try {
-    await db.one('SELECT 1');
-} 	catch (err) {
-  console.error('DB not reachable:', err.message);
-}
+// Test connection
+// try {
+//     await db.one('SELECT 1');
+// } 	catch (err) {
+//   console.error('DB not reachable:', err.message);
+// }
 
 export { pgp };
 export default db

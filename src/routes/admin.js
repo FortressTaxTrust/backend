@@ -2,13 +2,13 @@ import { Router } from "express";
 import db from "../adapter/pgsql.js";
 import { authenticateToken, adminAuth } from "../middleware/auth.js";
 import PgHelper from "../utils/pgHelpers.js";
-import {uploadBase64ToS3} from "../middleware/s3.js"
+import { uploadBase64ToS3 } from "../middleware/s3.js"
 const router = Router();
 
 /**
  * Get all case studies
  */
-router.get('/casestudies', authenticateToken ,adminAuth, async (req, res) => {
+router.get('/casestudies', authenticateToken, adminAuth, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1
     const limit = parseInt(req.query.limit) || 5
@@ -31,7 +31,7 @@ router.get('/casestudies', authenticateToken ,adminAuth, async (req, res) => {
 /**
  * Get single case study by ID
  */
-router.get('/casestudies/:id', authenticateToken ,adminAuth,async (req, res) => {
+router.get('/casestudies/:id', authenticateToken, adminAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const caseStudy = await db.oneOrNone('SELECT * FROM case_studies WHERE id = $1', [id]);
@@ -49,7 +49,7 @@ router.get('/casestudies/:id', authenticateToken ,adminAuth,async (req, res) => 
  * Create a new case study
  */
 
-router.post('/casestudies/create',authenticateToken ,adminAuth, async (req, res) => {
+router.post('/casestudies/create', authenticateToken, adminAuth, async (req, res) => {
   try {
     const { title, content, jsonData, status } = req.body;
 
@@ -60,7 +60,7 @@ router.post('/casestudies/create',authenticateToken ,adminAuth, async (req, res)
     const caseStudyData = {
       title,
       content,
-      metadata :jsonData,
+      metadata: jsonData,
       status: status || "completed",
       created_at: new Date()
     };
@@ -75,7 +75,7 @@ router.post('/casestudies/create',authenticateToken ,adminAuth, async (req, res)
 });
 
 
-router.post('/casestudies/upload/base64', authenticateToken ,adminAuth, async (req, res) => {
+router.post('/casestudies/upload/base64', authenticateToken, adminAuth, async (req, res) => {
   try {
     const { image, filename } = req.body;
 
@@ -86,11 +86,11 @@ router.post('/casestudies/upload/base64', authenticateToken ,adminAuth, async (r
     const matches = image.match(/^data:(.+);base64,(.+)$/);
 
     if (!matches || matches.length !== 3) {
-      return res.status(400).json({ status : "error" , message: 'Invalid base64 image format.' });
+      return res.status(400).json({ status: "error", message: 'Invalid base64 image format.' });
     }
     const file = await uploadBase64ToS3(image, filename, 'case-studies')
-   
-   
+
+
     res.status(201).json({
       message: 'Image uploaded successfully from base64 string.',
       url: file

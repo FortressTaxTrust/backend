@@ -1,17 +1,43 @@
 // src/tests/contactus.test.js
 import { jest, describe, it, expect, afterEach } from '@jest/globals';
-import request from 'supertest';
-import app from '../app.js';
-import * as mailer from '../utils/mailer.js';
-import db from '../adapter/pgsql.js';
 
-// Fully mock the mailer so no real SMTP connection happens
-jest.mock('../utils/mailer.js', () => ({
+// Define mocks outside factory
+const mockMailer = {
+  __esModule: true,
   sendMail: jest.fn().mockResolvedValue(true),
-}));
+};
 
-// Mock the DB
-jest.mock('../adapter/pgsql.js');
+const mockDb = {
+  __esModule: true,
+  default: {
+    any: jest.fn(),
+    one: jest.fn(),
+    oneOrNone: jest.fn(),
+    none: jest.fn(),
+    many: jest.fn(),
+  },
+  pgp: {
+    helpers: {
+      insert: jest.fn(),
+      update: jest.fn(),
+      ColumnSet: jest.fn(),
+    },
+    as: {
+      format: jest.fn(),
+      value: jest.fn(),
+    }
+  }
+};
+
+// Mock modules
+jest.unstable_mockModule('../utils/mailer.js', () => mockMailer);
+jest.unstable_mockModule('../adapter/pgsql.js', () => mockDb);
+
+// Dynamic imports
+const { default: app } = await import('../app.js');
+const mailer = await import('../utils/mailer.js');
+const { default: db } = await import('../adapter/pgsql.js');
+const { default: request } = await import('supertest');
 
 describe('Contact Us Routes', () => {
   afterEach(() => {
@@ -54,6 +80,8 @@ describe('Contact Us Routes', () => {
         email: 'test@example.com',
         firstName: 'John',
         lastName: 'Doe',
+        description: 'This is a test message',
+        number: '1234567890',
       };
 
       const res = await request(app).post('/contactus').send(contactData);
