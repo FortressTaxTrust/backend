@@ -53,6 +53,19 @@ const multiFileUpload = multer({
   },
 }).array('files', 20);
 
+const singleFileUpload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 100 * 1024 * 1024,
+  },
+  fileFilter: (req, file, cb) => {
+    if (!allowedMimeTypes.includes(file.mimetype)) {
+      return cb(new Error(`Invalid file type: ${file.originalname}`));
+    }
+    cb(null, true);
+  },
+}).single('image');
+
 
 const getFileFromS3 = async (fileUrl) => {
   try {
@@ -97,7 +110,7 @@ const uploadToS3 = async (req, res, next) => {
     const uploadedFiles = [];
 
     for (const file of req.files) {
-       const filePath = `fortress documents/${file.originalname}`;
+       const filePath = `fortress documents/${uuidv4()}-${file.originalname}`;
 
       const command = new PutObjectCommand({
         Bucket: process.env.AWS_S3_BUCKET_NAME,
@@ -134,6 +147,76 @@ const uploadToS3 = async (req, res, next) => {
   }
 };
 
+const uploadCaseStudyImageToS3 = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      console.log('No file found in request for case study image');
+      return next();
+    }
+
+    const file = req.file;
+    const filePath = `case-studies/${uuidv4()}-${file.originalname}`;
+
+    const command = new PutObjectCommand({
+      Bucket: process.env.AWS_S3_BUCKET_NAME,
+      Key: filePath,
+      Body: file.buffer,
+      ContentType: file.mimetype,
+    });
+
+    console.log(`Uploading case study image to S3: ${file.originalname}`);
+    await s3.send(command);
+
+    const fileUrl = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_REGION || 'us-east-1'}.amazonaws.com/${filePath}`;
+
+    req.fileUploaded = {
+      originalName: file.originalname,
+      url: fileUrl,
+    };
+
+    console.log('Case study image uploaded successfully:', req.fileUploaded);
+    next();
+  } catch (error) {
+    console.error('S3 case study image upload error:', error);
+    res.status(500).json({ message: 'Failed to upload case study images to S3', error: error.message });
+  }
+};
+
+const uploadBase64ToS3 = async (base64Image, originalFilename, folder = 'case-studies') => {
+  try {
+    // The image is expected to be in data URL format: "data:image/png;base64,iVBORw0KGgo...
+    const matches = base64Image.match(/^data:(.+);base64,(.+)$/);
+
+    if (!matches || matches.length !== 3) {
+      throw new Error('Invalid base64 image format.');
+    }
+
+    const mimeType = matches[1];
+    const base64Data = matches[2];
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    const filename = originalFilename || 'image.png';
+    const filePath = `${folder}/${uuidv4()}-${filename}`;
+
+    const command = new PutObjectCommand({
+      Bucket: process.env.AWS_S3_BUCKET_NAME,
+      Key: filePath,
+      Body: buffer,
+      ContentType: mimeType,
+    });
+
+    console.log(`Uploading base64 image to S3: ${filePath}`);
+    await s3.send(command);
+
+    const fileUrl = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_REGION || 'us-east-1'}.amazonaws.com/${filePath}`;
+
+    return { url: fileUrl, path: filePath };
+  } catch (error) {
+    console.error('S3 base64 upload error:', error);
+    throw new Error(`Failed to upload base64 image to S3: ${error.message}`);
+  }
+};
+
 const getPresignedUrl = async (fileName , fileType) => {
   // const safeFileName = fileName.replace(/[^a-zA-Z0-9_\-\.]/g, "_");
   const key = `${fileName}`;
@@ -157,4 +240,4 @@ const getMultiplePresignedUrls = async (files) => {
   return results;
 };
 
-export { uploadToS3, multiFileUpload , getFileFromS3 , getMultiplePresignedUrls , getPresignedUrl};
+export { uploadToS3, multiFileUpload , getFileFromS3 , getMultiplePresignedUrls , getPresignedUrl, uploadCaseStudyImageToS3, singleFileUpload, uploadBase64ToS3};

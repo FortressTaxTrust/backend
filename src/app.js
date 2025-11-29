@@ -10,6 +10,8 @@ import mailRouter from "./routes/contactus.js";
 import { startScheduler } from './scheduler/cron.js';
 import adminRouter from "./routes/admin.js"
 import subscriptionRouter from "./routes/subscriptions.js"
+import caseStudies from "./routes/casestudies.js"
+
 // Load environment variables
 dotenv.config();
 
@@ -97,6 +99,7 @@ app.use('/ai', aiRouter);
 app.use('/contactus', mailRouter)
 app.use ("/admin" , adminRouter)
 app.use ("/subscriptions" , subscriptionRouter)
+app.use("/casestudies" , caseStudies);
 
 
 // Error handling middleware
