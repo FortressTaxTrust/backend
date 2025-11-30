@@ -15,10 +15,11 @@ const PgHelper = {
   /**
    * Dynamic MULTI INSERT (array of objects)
    */
-  insertMany: async (table, rows) => {
+  insertMany: async (table, rows, tx = null) => {
+    const connection = tx || db; // Use transaction if provided, otherwise default db connection
     const cs = new pgp.helpers.ColumnSet(Object.keys(rows[0]), { table });
     const query = pgp.helpers.insert(rows, cs) + " RETURNING *";
-    return db.many(query);
+    return connection.many(query);
   },
 
   /**

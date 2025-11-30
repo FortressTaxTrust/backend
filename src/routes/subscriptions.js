@@ -2,14 +2,15 @@ import { Router } from "express";
 import db from "../adapter/pgsql.js";
 import { authenticateToken, adminAuth } from "../middleware/auth.js";
 import { SquareClient, SquareEnvironment ,WebhooksHelper} from "square";
+import { sendMail } from "../utils/mailer.js";
 import PgHelper from "../utils/pgHelpers.js";
 import { v4 as uuidv4 } from 'uuid';
 const router = Router();
 
 const TEMPLATE_ID = process.env.TEMPLATE_ID || '2GZV2X2HZP4NGA54VWRG65DR';
-const SQUARE_APPLICATION_ID  = process.env.SQUARE_APPLICATION_ID  || 'sandbox-sq0idb-WLCH0T6HqX99kU9mkf_xgw'
-const LOCATION_ID = process.env.SQUARE_LOCATION_ID || "L4JMPB8E5HHBY"
-const TOKEN = process.env.SQUARE_TOKEN || "EAAAlyl8GiGpOaCG4CgyJCD0xhFDtGjlRA3TySBTwDT4UCSb9og4e7PjsqEZv_wO"
+const SQUARE_APPLICATION_ID  = process.env.SQUARE_APPLICATION_ID  || 'sandbox-sq0idb-aDqfJYN8w4TBmSx507Y5ng'
+const LOCATION_ID = process.env.SQUARE_LOCATION_ID || "LJT99M9JCVW26"
+const TOKEN = process.env.SQUARE_TOKEN || "EAAAlwbIxAWuy77FT5w_d6PFdozJM1S80IVSJuPFE8_mYF09birXtAU8GfTbALxK"
 const SIGNATURE_KEY = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY || '02K1wztoD8KmpCAxX1bwTQ';
 const NOTIFICATION_URL = process.env.SQUARE_WEBHOOK_NOTIFICATION_URL ;
 
@@ -23,8 +24,28 @@ const customersApi = squareClient.customers;
 const paymentsApi = squareClient.payments;
 const cardsApi = squareClient.cards || null; 
 
+/**
+ * GET /plans
+ * Get all available subscription plans. This is a public endpoint.
+ */
+router.get('/plans', async (req, res) => {
+	try {
+		const plans = await db.any(
+			"SELECT id, name, price, duration_days,benefits,square_plan_id FROM subscription WHERE enabled = TRUE ORDER BY price ASC"
+		);
+		res.json({
+			status: 'success',
+			message: 'Subscription plans retrieved successfully.',
+			plans: plans,
+		});
+	} catch (err) {
+		console.error('Error fetching subscription plans:', err);
+		res.status(500).json({ status: 'error', message: 'Failed to fetch subscription plans', error: err.message });
+	}
+});
+
 async function ensureSquareCustomerForUser(userId) {
-	const existing = await db.oneOrNone('SELECT square_customer_id FROM square_customers WHERE user_id=$1 LIMIT 1', [userId]);
+	const existing = await db.oneOrNone('SELECT square_customer_id FROM square_customers WHERE user_id=$1 ORDER BY created_at DESC LIMIT 1', [userId]);
 	console.log("existing" , existing)
 	if (existing) return existing.square_customer_id;
 
@@ -41,25 +62,9 @@ async function ensureSquareCustomerForUser(userId) {
 	return sqId;
 }
 
-/* ====== Endpoint: create subscription
-	 Behavior:
-		- Requires user_id and subscription_id (your internal subscription plan id)
-		- Optionally: square_customer_id (or server will create one). Optionally: card_id (Square card on file).
-		- If card_id provided => attempt to create subscription in Square and mark as active.
-		- If no card_id provided => create a DB record with status 'pending' and return instructions to collect payment method.
-	 Request body:
-	 {
-		 user_id,
-		 subscription_id,      -- internal subscription.plan id (your subscription table)
-		 square_customer_id,   -- optional (if not passed server will create customer if email present)
-		 card_id,              -- optional square card id (if provided will create active subscription)
-		 start_date,           -- optional ISO date (YYYY-MM-DD). If omitted Square uses immediate or your plan logic
-		 no_expiry (boolean)   -- optional
-	 }
-*/
 router.post('/square/create-subscription', async (req, res) => {
 	try {
-		const { user_id, subscription_id, card_id, square_customer_id, start_date, no_expiry } = req.body;
+		const { user_id, subscription_id, card_id, customer_id, no_expiry } = req.body;
 		if (!user_id || !subscription_id) return res.status(400).json({ status: "error", message:'user_id & subscription_id required' });
 
 		// Load user
@@ -72,7 +77,7 @@ router.post('/square/create-subscription', async (req, res) => {
 		if (!tier) return res.status(404).json({ status: "error", message: 'subscription plan not found' });
 
 		// ensure square customer id
-		let sqCustId = square_customer_id;
+		let sqCustId = customer_id || user.square_customer_id;
 		if (!sqCustId) {
 			sqCustId = await ensureSquareCustomerForUser(user_id);
 		}
@@ -80,32 +85,37 @@ router.post('/square/create-subscription', async (req, res) => {
 			if (!tier.square_plan_id) {
 				return res.status(400).json({ status: "error", message: 'Server requires subscription.square_plan_id for immediate Square subscription creation' });
 			}
+			const yearly_price = {
+				ordinal: BigInt("1"),
+				orderTemplateId: TEMPLATE_ID,
+				pricing: {
+					type: "RELATIVE",
+					priceAdjustment: {
+					type: "FIXED_PERCENTAGE",
+					percentage: "0"
+					}
+				}
+			}
+			const phases = [];
+			if(tier.duration_days > 31) phases.push(yearly_price);
+
+			const startDate = new Date().toISOString().split('T')[0];
 			const body = {
 				idempotencyKey: uuidv4(),
 				locationId: LOCATION_ID,
 				customerId: sqCustId,
 				cardId: card_id,
  				planVariationId: tier.square_plan_id,
-				monthlyBillingAnchorDate : 1,
-				phases: [
-					{
-					ordinal: BigInt("1"),
-					orderTemplateId: '2GZV2X2HZP4NGA54VWRG65DR',
-					pricing: {
-						type: "RELATIVE",
-						priceAdjustment: {
-						type: "FIXED_PERCENTAGE",
-						percentage: "0"
-						}
-					}
-					}
-				],
-
-				startDate: start_date || undefined,
-				timezone: "UTC"
+				phases: phases.length > 0 ? phases : undefined,
+				startDate: startDate,
+				timezone: "America/Los_Angeles",
+				source: {
+					name: "My Application",
+				},
 			};
 
 			
+			console.log("body" , body)
 			const sqResp = await subscriptionsApi.create(body);
 			const createdSub = sqResp.subscription;
 			if (!createdSub) throw new Error('Square subscription creation failed');
@@ -127,10 +137,47 @@ router.post('/square/create-subscription', async (req, res) => {
 					chargedThrough,
 					createdSub.status || 'active',
 					JSON.stringify(createdSub),
-					!!no_expiry
+					false
 				]
 			);
 
+			// Send subscription confirmation email
+			const userEmailData = {
+				to: user.email,
+				subject: "Your Fortress Tax and Trust Subscription is Active!",
+				html: `
+				<div style="font-family: Arial, sans-serif; background:#f7f7f7; padding:20px;">
+				  <div style="max-width:600px; margin:auto; background:#ffffff; padding:25px; border-radius:8px; border:1px solid #e1e1e1;">
+					
+		  
+					<h2 style="color:#333;">Welcome, ${user.first_name}!</h2>
+		  
+					<p>
+					  Thank you for subscribing to the <strong>${tier.name}</strong> plan with Fortress Tax and Trust. 
+					  Your subscription is now active and you have access to all the benefits of your plan.
+					</p>
+
+					<p><strong>Plan Details:</strong></p>
+					<ul>
+						<li>Plan: ${tier.name}</li>
+						<li>Price: $${tier.price}</li>
+						<li>Start Date: ${new Date(createdSub.startDate).toLocaleDateString()}</li>
+					</ul>
+		  
+					<p>You can manage your subscription at any time from your account dashboard.</p>
+		  
+					<hr style="margin:25px 0; border:none; border-top:1px solid #ddd;">
+		  
+					<p style="font-size:13px; color:#666; text-align:center;">
+					  Fortress Tax and Trust<br>
+					  18170 Dallas Pkwy. Suite 303 Dallas, TX 75287<br>
+					  <a href="https://fortresstaxandtrust.com" style="color:#4A6CF7;">fortresstaxandtrust.com</a>
+					</p>
+		  
+				  </div>
+				</div>`
+			  };
+			await sendMail(userEmailData);
 			return res.json({ ok: true, subscription: insert });
 		}
 	} catch (err) {

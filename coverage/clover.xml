@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<coverage generated="1764434036808" clover="3.2.0">
-  <project timestamp="1764434036808" name="All files">
-    <metrics statements="1910" coveredstatements="390" conditionals="1485" coveredconditionals="140" methods="232" coveredmethods="28" elements="3627" coveredelements="558" complexity="0" loc="1910" ncloc="1910" packages="5" files="15" classes="15"/>
+<coverage generated="1764438819694" clover="3.2.0">
+  <project timestamp="1764438819694" name="All files">
+    <metrics statements="1910" coveredstatements="390" conditionals="1485" coveredconditionals="139" methods="232" coveredmethods="28" elements="3627" coveredelements="557" complexity="0" loc="1910" ncloc="1910" packages="5" files="15" classes="15"/>
     <package name="src">
       <metrics statements="26" coveredstatements="20" conditionals="4" coveredconditionals="1" methods="4" coveredmethods="2"/>
-      <file name="app.js" path="/Users/guesttt/Documents/backend/src/app.js">
+      <file name="app.js" path="/home/aamish/Desktop/fortresstax/backend/src/app.js">
         <metrics statements="26" coveredstatements="20" conditionals="4" coveredconditionals="1" methods="4" coveredmethods="2"/>
         <line num="16" count="6" type="stmt"/>
         <line num="19" count="6" type="stmt"/>
@@ -36,7 +36,7 @@
     </package>
     <package name="src.middleware">
       <metrics statements="152" coveredstatements="27" conditionals="82" coveredconditionals="10" methods="15" coveredmethods="0"/>
-      <file name="auth.js" path="/Users/guesttt/Documents/backend/src/middleware/auth.js">
+      <file name="auth.js" path="/home/aamish/Desktop/fortresstax/backend/src/middleware/auth.js">
         <metrics statements="63" coveredstatements="15" conditionals="55" coveredconditionals="6" methods="7" coveredmethods="0"/>
         <line num="6" count="3" type="stmt"/>
         <line num="13" count="3" type="cond" truecount="2" falsecount="0"/>
@@ -102,7 +102,7 @@
         <line num="165" count="0" type="stmt"/>
         <line num="168" count="0" type="stmt"/>
       </file>
-      <file name="s3.js" path="/Users/guesttt/Documents/backend/src/middleware/s3.js">
+      <file name="s3.js" path="/home/aamish/Desktop/fortresstax/backend/src/middleware/s3.js">
         <metrics statements="89" coveredstatements="12" conditionals="27" coveredconditionals="4" methods="8" coveredmethods="0"/>
         <line num="9" count="6" type="stmt"/>
         <line num="16" count="6" type="cond" truecount="2" falsecount="0"/>
@@ -196,8 +196,8 @@
       </file>
     </package>
     <package name="src.routes">
-      <metrics statements="1650" coveredstatements="334" conditionals="1364" coveredconditionals="129" methods="201" coveredmethods="26"/>
-      <file name="admin.js" path="/Users/guesttt/Documents/backend/src/routes/admin.js">
+      <metrics statements="1650" coveredstatements="334" conditionals="1364" coveredconditionals="128" methods="201" coveredmethods="26"/>
+      <file name="admin.js" path="/home/aamish/Desktop/fortresstax/backend/src/routes/admin.js">
         <metrics statements="61" coveredstatements="42" conditionals="28" coveredconditionals="21" methods="7" coveredmethods="6"/>
         <line num="6" count="6" type="stmt"/>
         <line num="11" count="6" type="stmt"/>
@@ -261,7 +261,7 @@
         <line num="146" count="0" type="stmt"/>
         <line num="147" count="0" type="stmt"/>
       </file>
-      <file name="ai.js" path="/Users/guesttt/Documents/backend/src/routes/ai.js">
+      <file name="ai.js" path="/home/aamish/Desktop/fortresstax/backend/src/routes/ai.js">
         <metrics statements="62" coveredstatements="8" conditionals="29" coveredconditionals="0" methods="6" coveredmethods="0"/>
         <line num="10" count="6" type="stmt"/>
         <line num="12" count="6" type="stmt"/>
@@ -326,7 +326,7 @@
         <line num="611" count="0" type="stmt"/>
         <line num="613" count="0" type="stmt"/>
       </file>
-      <file name="auth.js" path="/Users/guesttt/Documents/backend/src/routes/auth.js">
+      <file name="auth.js" path="/home/aamish/Desktop/fortresstax/backend/src/routes/auth.js">
         <metrics statements="274" coveredstatements="23" conditionals="228" coveredconditionals="4" methods="22" coveredmethods="0"/>
         <line num="23" count="6" type="stmt"/>
         <line num="25" count="6" type="stmt"/>
@@ -603,7 +603,7 @@
         <line num="742" count="0" type="stmt"/>
         <line num="743" count="0" type="stmt"/>
       </file>
-      <file name="casestudies.js" path="/Users/guesttt/Documents/backend/src/routes/casestudies.js">
+      <file name="casestudies.js" path="/home/aamish/Desktop/fortresstax/backend/src/routes/casestudies.js">
         <metrics statements="27" coveredstatements="4" conditionals="8" coveredconditionals="0" methods="4" coveredmethods="0"/>
         <line num="7" count="6" type="stmt"/>
         <line num="12" count="6" type="stmt"/>
@@ -633,7 +633,7 @@
         <line num="58" count="0" type="stmt"/>
         <line num="59" count="0" type="stmt"/>
       </file>
-      <file name="contactus.js" path="/Users/guesttt/Documents/backend/src/routes/contactus.js">
+      <file name="contactus.js" path="/home/aamish/Desktop/fortresstax/backend/src/routes/contactus.js">
         <metrics statements="22" coveredstatements="22" conditionals="16" coveredconditionals="12" methods="2" coveredmethods="2"/>
         <line num="5" count="6" type="stmt"/>
         <line num="11" count="6" type="stmt"/>
@@ -658,7 +658,7 @@
         <line num="128" count="1" type="stmt"/>
         <line num="130" count="1" type="stmt"/>
       </file>
-      <file name="protected.js" path="/Users/guesttt/Documents/backend/src/routes/protected.js">
+      <file name="protected.js" path="/home/aamish/Desktop/fortresstax/backend/src/routes/protected.js">
         <metrics statements="14" coveredstatements="12" conditionals="0" coveredconditionals="0" methods="1" coveredmethods="1"/>
         <line num="4" count="6" type="stmt"/>
         <line num="7" count="6" type="stmt"/>
@@ -675,7 +675,7 @@
         <line num="24" count="0" type="stmt"/>
         <line num="31" count="6" type="stmt"/>
       </file>
-      <file name="subscriptions.js" path="/Users/guesttt/Documents/backend/src/routes/subscriptions.js">
+      <file name="subscriptions.js" path="/home/aamish/Desktop/fortresstax/backend/src/routes/subscriptions.js">
         <metrics statements="112" coveredstatements="72" conditionals="117" coveredconditionals="36" methods="6" coveredmethods="5"/>
         <line num="7" count="6" type="stmt"/>
         <line num="9" count="6" type="cond" truecount="2" falsecount="0"/>
@@ -790,7 +790,7 @@
         <line num="264" count="0" type="stmt"/>
         <line num="265" count="0" type="stmt"/>
       </file>
-      <file name="test.js" path="/Users/guesttt/Documents/backend/src/routes/test.js">
+      <file name="test.js" path="/home/aamish/Desktop/fortresstax/backend/src/routes/test.js">
         <metrics statements="640" coveredstatements="37" conditionals="498" coveredconditionals="0" methods="98" coveredmethods="1"/>
         <line num="7" count="6" type="stmt"/>
         <line num="9" count="6" type="stmt"/>
@@ -1433,8 +1433,8 @@
         <line num="2551" count="0" type="stmt"/>
         <line num="2555" count="6" type="stmt"/>
       </file>
-      <file name="zoho.js" path="/Users/guesttt/Documents/backend/src/routes/zoho.js">
-        <metrics statements="438" coveredstatements="114" conditionals="440" coveredconditionals="56" methods="55" coveredmethods="11"/>
+      <file name="zoho.js" path="/home/aamish/Desktop/fortresstax/backend/src/routes/zoho.js">
+        <metrics statements="438" coveredstatements="114" conditionals="440" coveredconditionals="55" methods="55" coveredmethods="11"/>
         <line num="9" count="7" type="stmt"/>
         <line num="10" count="7" type="stmt"/>
         <line num="13" count="7" type="stmt"/>
@@ -1719,7 +1719,7 @@
         <line num="940" count="0" type="stmt"/>
         <line num="951" count="0" type="cond" truecount="0" falsecount="2"/>
         <line num="952" count="0" type="stmt"/>
-        <line num="960" count="1" type="cond" truecount="2" falsecount="0"/>
+        <line num="960" count="1" type="cond" truecount="1" falsecount="1"/>
         <line num="961" count="1" type="stmt"/>
         <line num="963" count="1" type="cond" truecount="1" falsecount="1"/>
         <line num="964" count="1" type="stmt"/>
@@ -1877,7 +1877,7 @@
     </package>
     <package name="src.scheduler">
       <metrics statements="57" coveredstatements="5" conditionals="32" coveredconditionals="0" methods="4" coveredmethods="0"/>
-      <file name="cron.js" path="/Users/guesttt/Documents/backend/src/scheduler/cron.js">
+      <file name="cron.js" path="/home/aamish/Desktop/fortresstax/backend/src/scheduler/cron.js">
         <metrics statements="57" coveredstatements="5" conditionals="32" coveredconditionals="0" methods="4" coveredmethods="0"/>
         <line num="7" count="6" type="stmt"/>
         <line num="11" count="6" type="stmt"/>
@@ -1940,14 +1940,14 @@
     </package>
     <package name="src.utils">
       <metrics statements="25" coveredstatements="4" conditionals="3" coveredconditionals="0" methods="8" coveredmethods="0"/>
-      <file name="mailer.js" path="/Users/guesttt/Documents/backend/src/utils/mailer.js">
+      <file name="mailer.js" path="/home/aamish/Desktop/fortresstax/backend/src/utils/mailer.js">
         <metrics statements="4" coveredstatements="3" conditionals="0" coveredconditionals="0" methods="1" coveredmethods="0"/>
         <line num="4" count="5" type="stmt"/>
         <line num="6" count="5" type="stmt"/>
         <line num="26" count="5" type="stmt"/>
         <line num="27" count="0" type="stmt"/>
       </file>
-      <file name="pgHelpers.js" path="/Users/guesttt/Documents/backend/src/utils/pgHelpers.js">
+      <file name="pgHelpers.js" path="/home/aamish/Desktop/fortresstax/backend/src/utils/pgHelpers.js">
         <metrics statements="21" coveredstatements="1" conditionals="3" coveredconditionals="0" methods="7" coveredmethods="0"/>
         <line num="4" count="5" type="stmt"/>
         <line num="11" count="0" type="stmt"/>

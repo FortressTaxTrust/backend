@@ -147,7 +147,6 @@ CREATE TABLE document_upload_logs (
     updated_at TIMESTAMPTZ DEFAULT now()
 );
 INSERT INTO user_type (type, enabled) VALUES ('prospect', TRUE), ('client', TRUE);
-INSERT INTO subscription (square_plan_id,name,price,duration_days,metadata,enabled) VALUES (NULL,'Free',0.00,NULL,'{}'::json,TRUE);
 ALTER TABLE accounts ALTER COLUMN user_id DROP NOT NULL;
 CREATE TABLE accounts_users (
     id BIGSERIAL PRIMARY KEY,
@@ -207,3 +206,5 @@ CREATE TABLE payment_methods (
   metadata JSONB NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
+ALTER TABLE subscription ADD COLUMN benefits TEXT[];
+ALTER TABLE accounts DROP COLUMN IF EXISTS user_id;

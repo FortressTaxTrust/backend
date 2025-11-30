@@ -5,6 +5,8 @@ import { authenticateToken } from '../middleware/auth.js';
 import FormData from 'form-data';
 import stringSimilarity from "string-similarity";
 import multer from "multer";
+import db from '../adapter/pgsql.js';
+import PgHelper from '../utils/pgHelpers.js';
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
@@ -1117,15 +1119,12 @@ router.post("/create/multiple-account", authenticateToken, async (req, res) => {
   const createdAccounts = [];
   const createdContacts = [];
   const createdFolders = [];
+  const newDbAccounts = [];
 
   const { accountData: accountDatas, userData } = req.body;
 
   if (!Array.isArray(accountDatas) || accountDatas.length === 0) {
-    return res.status(400).json({
-      status: "error",
-      message: "No account data provided.",
-      errors: [{ field: "accountDatas", message: "You must provide at least one account entry." }],
-    });
+    return res.status(400).json({ status: "error", message: "No account data provided.", errors: [{ field: "accountDatas", message: "You must provide at least one account entry." }] });
   }
 
   // Helper: check local duplicates
@@ -1166,21 +1165,6 @@ router.post("/create/multiple-account", authenticateToken, async (req, res) => {
     return duplicates;
   };
 
-
-  // Helper: rollback created items
-  const rollback = async () => {
-    for (const contact of createdContacts) {
-      try { await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlCRM}/Contacts/${contact.id}`, "DELETE"); } catch (_) {}
-    }
-    for (const account of createdAccounts) {
-      try { await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlCRM}/Accounts/${account.id}`, "DELETE"); } catch (_) {}
-    }
-    if (createdFolders.length) {
-      const data = { data: createdFolders.map((id) => ({ attributes: { status: "51" }, id, type: "files" })) };
-      try { await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlWorkdrive}/files`, "PATCH", data, 0, true); } catch (_) {}
-    }
-  };
-
   try {
     // 1️⃣ Local duplicates check
     const localAccountNames = getLocalDuplicates(accountDatas, "accountName");
@@ -1216,6 +1200,52 @@ router.post("/create/multiple-account", authenticateToken, async (req, res) => {
         errors: localContactTins.map((tin) => ({ field: "SSN", message: `TIN/SSN "${tin}" appears more than once.` })),
       });
 
+       const dbAccountNames = await db.any(
+        `SELECT account_name FROM accounts WHERE LOWER(account_name) = ANY($1)`,
+        [accountDatas.map(a => a.accountName.toLowerCase())]
+      );
+      if (dbAccountNames.length)
+        return res.status(400).json({
+        status: "error",
+        message: "Account exists in Database",
+        errors: dbAccountNames.map(r => ({ field: "accountName", message: `"${r.account_name}" already exists in Fortress Tax and Trust` })),
+      });
+
+      const dbTINs = await db.any(
+        `SELECT tin FROM accounts WHERE tin = ANY($1)`,
+        [accountDatas.map(a => a.taxId)]
+      );
+      if (dbTINs.length)
+        return res.status(400).json({
+          status: "error",
+          message: "Account TIN exists in Database",
+          errors: dbTINs.map(r => ({ field: "TIN", message: `TIN "${r.tin}" already exists in Fortress Tax and Trust` })),
+      });
+    const contactsToCheck = allContacts.filter(c => c.type !== "own" && c.email).map(c => c.email.toLowerCase());
+
+    const dbEmails = await db.any( `SELECT email FROM users WHERE LOWER(email) = ANY($1)`, [contactsToCheck]);
+
+    // 3. If duplicates found → return error
+    if (dbEmails.length) {
+      return res.status(400).json({
+        status: "error",
+        message: "Contact already exists in Fortress Tax and Trust",
+        errors: dbEmails.map(r => ({
+          field: "email",
+          message: `Email "${r.email}" exists in Fortress Tax and Trust`,
+        })),
+      });
+    }
+    const dbSSN = await db.any(
+      `SELECT ssn FROM users WHERE ssn = ANY($1)`,
+      [allContacts.map(c => c.ssn)]
+    );
+    if (dbSSN.length)
+      return res.status(400).json({
+        status: "error",
+        message: "Contact SSN exists in Fortress Tax and Trust",
+        errors: dbSSN.map(r => ({ field: "ssn", message: `SSN "${r.ssn}" exists in Fortress Tax and Trust` })),
+    });
     // 2️⃣ Zoho duplicates check separately
     const [existingAccountNames, existingTins, existingContactEmails, existingContactTins] = await Promise.all([
       checkZohoDuplicates("Accounts", "Account_Name", accountDatas.map(a => a.accountName)),
@@ -1223,7 +1253,6 @@ router.post("/create/multiple-account", authenticateToken, async (req, res) => {
       checkZohoDuplicates("Contacts", "Email", allContacts.map(c => c.email)),
       checkZohoDuplicates("Contacts", "EIN_Number", allContacts.map(c => c.ssn)),
     ]);
-
     const errors = [];
     if (existingAccountNames.length) errors.push(...existingAccountNames.map(name => ({ field: "accountName", message: `Account "${name}" already exists!` })));
     if (existingTins.length) errors.push(...existingTins.map(tin => ({ field: "TIN", message: `In Accounts SSN/TIN "${tin}" already exists!` })));
@@ -1231,15 +1260,20 @@ router.post("/create/multiple-account", authenticateToken, async (req, res) => {
     if (existingContactTins.length) errors.push(...existingContactTins.map(tin => ({ field: "TIN", message: `In Contacts SSN "${tin}" already exists!` })));
 
     if (errors.length) return res.status(400).json({ status: "error", message: "Some duplicates exist", errors });
+    
+    // Wrap all Zoho and DB operations in a transaction
+    await db.tx(async t => {
+      // Get primary user's DB record
+      const userRecord = await t.oneOrNone('SELECT id FROM users WHERE cognito_id = $1', [userData.username]);
 
-    // 3️⃣ Create Accounts & Workdrive Folders
-    for (const accountData of accountDatas) {
-      const folder = await createFolder(process.env.WORKDRIVE_PARENT_FOLDER_ID || "l0dnwed8da556672f4f6698fb16f1662271be", accountData.accountName);
-      createdFolders.push(folder?.id);
+      // 3️⃣ Create Accounts & Workdrive Folders
+      for (const accountData of accountDatas) {
+        const folder = await createFolder(process.env.WORKDRIVE_PARENT_FOLDER_ID || "l0dnwed8da556672f4f6698fb16f1662271be", accountData.accountName);
+        createdFolders.push(folder?.id);
 
-      const accountPayload = {
-        data: [{
-          Owner: { id: "6791036000000558001" },
+        const accountPayload = {
+          data: [{
+                     Owner: { id: "6791036000000558001" },
           Account_Name: accountData.accountName,
           Account_Type: accountData.accountType || "",
           Description: accountData.description || "",
@@ -1261,13 +1295,26 @@ router.post("/create/multiple-account", authenticateToken, async (req, res) => {
           Account_Owner: accountData.accountOwner || "",
           OpenCorp_Page: accountData.openCorpPage || "",
         }],
-      };
+        };
 
-      const accountRes = await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlCRM}/Accounts`, "POST", accountPayload);
-      const accountId = accountRes?.data?.[0]?.details?.id;
-      if (!accountId) throw new Error(accountRes);
-      createdAccounts.push({ id: accountId, accountType : accountData.accountType, name: accountData.accountName, link: folder?.attributes?.permalink || "" });
-    }
+        const accountRes = await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlCRM}/Accounts`, "POST", accountPayload);
+        const accountId = accountRes?.data?.[0]?.details?.id;
+        if (!accountId) throw new Error(accountRes);
+        createdAccounts.push({ id: accountId, accountType : accountData.accountType, name: accountData.accountName, link: folder?.attributes?.permalink || ""});
+        // Save account to local DB
+        const newDbAccount = await t.one(
+          `INSERT INTO accounts(account_name, account_type, description, client_note, phone, fax,
+            billing_street, billing_city, billing_state, billing_country, billing_code,
+            work_drive_link, overseer_officer, tin, trustee, prospect_folder_link, zoho_account_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id`,
+          [
+            accountData.accountName, accountData.accountType, accountData.description, accountData.clientNote, accountData.phone1, accountData.fax,
+            accountData.billingStreet, accountData.billingCity, accountData.billingState, accountData.billingCountry, accountData.billingCode, 
+            folder?.attributes?.permalink, accountData.complianceOfficer, accountData.taxId, accountData.trusteeName, null, accountId
+          ]
+        );
+        newDbAccounts.push(newDbAccount);
+      }
 
     // 4️⃣ Create Contacts
     for (const contact of allContacts) {
@@ -1297,11 +1344,42 @@ router.post("/create/multiple-account", authenticateToken, async (req, res) => {
         trigger: ["workflow"],
       };
 
-      const contactRes = await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlCRM}/Contacts`, "POST", contactPayload);
-      const contactId = contactRes?.data?.[0]?.details?.id;
-      if (!contactId) throw new Error(`Failed to create contact "${contact.email}"`);
-      createdContacts.push({ id: contactId, email: contact.email });
-    }
+        const contactRes = await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlCRM}/Contacts`, "POST", contactPayload);
+        const contactId = contactRes?.data?.[0]?.details?.id;
+        if (!contactId) throw new Error(`Failed to create contact "${contact.email}"`);
+        createdContacts.push({ id: contactId, email: contact.email });
+
+        // Save contact as a new user in local DB if they don't exist
+        const isRelated = ['spouse', 'child', 'dependent'].includes(contact.type);
+        const relatedToUserId = isRelated ? userRecord.id : null;
+        const relationshipType = isRelated ? contact.type : null;
+        await t.none(`
+          INSERT INTO users (
+            first_name, last_name, email, phone, date_of_birth, ssn, cognito_id, secondary_email, fax,
+            important_notes, mailing_street, mailing_city, mailing_state, mailing_zip, mailing_country,
+            related_to_user_id, relationship_type, user_type_id
+          )
+          VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9,
+            $10, $11, $12, $13, $14, $15,
+            $16, $17, (SELECT id FROM user_type WHERE type = $18)
+          )
+          ON CONFLICT (email) DO NOTHING
+        `, [
+          contact.firstName, contact.lastName, contact.email, contact.phone, contact.dateOfBirth || null,
+          contact.ssn, `${contactId}`, contact.secondaryEmail, contact.fax, contact.importantNotes,
+          contact.mailingStreet, contact.mailingCity, contact.mailingState, contact.mailingZip, contact.mailingCountry,
+          relatedToUserId, relationshipType, contact.contactType?.toLowerCase() || 'prospect'
+        ]);
+      }
+
+      // 5️⃣ Link primary user to all newly created accounts in local DB
+      if (userRecord && newDbAccounts.length > 0) {
+        const values = newDbAccounts.map(acc => ({ user_id: userRecord.id, account_id: acc.id }));
+        await PgHelper.insertMany('accounts_users', values, t)
+       
+      }
+    });
 
     // ✅ Success
     return res.status(200).json({
@@ -1309,17 +1387,37 @@ router.post("/create/multiple-account", authenticateToken, async (req, res) => {
       message: "All accounts and contacts created successfully.",
       data: { accounts: createdAccounts, contacts: createdContacts },
     });
-
   } catch (err) {
     console.error("Error creating accounts/contacts:", err);
-    await rollback();
+
+    // Zoho Rollback
+    for (const contact of createdContacts) {
+      try { await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlCRM}/Contacts/${contact.id}`, "DELETE"); } catch (_) {}
+    }
+    for (const account of createdAccounts) {
+      try { await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlCRM}/Accounts/${account.id}`, "DELETE"); } catch (_) {}
+    }
+    if (createdFolders.length) {
+      const data = { data: createdFolders.map((id) => ({ attributes: { status: "51" }, id, type: "files" })) };
+      try { await makeZohoAPICall(`${ZOHO_CONFIG.baseUrlWorkdrive}/files`, "PATCH", data, 0, true); } catch (_) {}
+    }
 
     // Handle Zoho validation errors
     const errors = [];
-    if (err.response?.data?.errors) {
+    if (err.response?.data?.errors) { // Zoho API errors
       err.response.data.errors.forEach(e => {
         if (Array.isArray(e.error)) e.error.forEach(subErr => errors.push({ field: subErr.details?.json_path || e.field || "server", message: subErr.message || e.message || "Unknown error", error: subErr }));
         else errors.push({ field: e.field || "server", message: e.message || "Unknown error", error: e.error || e });
+      });
+    } else if (err.code) { // Database errors (from pg-promise)
+      errors.push({
+        field: "database",
+        message: `Database operation failed: ${err.message}`,
+        error: {
+          code: err.code, // e.g., '23505' for unique_violation
+          constraint: err.constraint, // e.g., 'users_email_key'
+          details: err.detail,
+        }
       });
     } else {
       errors.push({ field: "server", message: err.message || "Unknown error", error: err.response?.data?.data || err });
