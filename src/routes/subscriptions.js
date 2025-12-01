@@ -8,9 +8,9 @@ import { v4 as uuidv4 } from 'uuid';
 const router = Router();
 
 const TEMPLATE_ID = process.env.TEMPLATE_ID || '2GZV2X2HZP4NGA54VWRG65DR';
-const SQUARE_APPLICATION_ID  = process.env.SQUARE_APPLICATION_ID  || 'sandbox-sq0idb-aDqfJYN8w4TBmSx507Y5ng'
+const SQUARE_APPLICATION_ID  = process.env.SQUARE_APPLICATION_ID  || 'sandbox-sq0idb-WLCH0T6HqX99kU9mkf_xgw'
 const LOCATION_ID = process.env.SQUARE_LOCATION_ID || "LJT99M9JCVW26"
-const TOKEN = process.env.SQUARE_TOKEN || "EAAAlwbIxAWuy77FT5w_d6PFdozJM1S80IVSJuPFE8_mYF09birXtAU8GfTbALxK"
+const TOKEN = process.env.SQUARE_TOKEN || "EAAAl0Drw9kpVQ7_9D03puIZh6hdxf_e_f_KrJrYBuUE3lftWSwApYlWDKljS5nD"
 const SIGNATURE_KEY = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY || '02K1wztoD8KmpCAxX1bwTQ';
 const NOTIFICATION_URL = process.env.SQUARE_WEBHOOK_NOTIFICATION_URL ;
 
@@ -86,13 +86,13 @@ router.post('/square/create-subscription', async (req, res) => {
 				return res.status(400).json({ status: "error", message: 'Server requires subscription.square_plan_id for immediate Square subscription creation' });
 			}
 			const yearly_price = {
-				ordinal: BigInt("1"),
+				ordinal: BigInt("0"),
 				orderTemplateId: TEMPLATE_ID,
 				pricing: {
 					type: "RELATIVE",
 					priceAdjustment: {
-					type: "FIXED_PERCENTAGE",
-					percentage: "0"
+						type: "FIXED_PERCENTAGE",
+						percentage: "0"
 					}
 				}
 			}
