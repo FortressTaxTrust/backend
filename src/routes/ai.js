@@ -283,6 +283,10 @@ router.post(
       const userId = user?.sub || null;
       const userContext = body.userContext || null;
 
+      if (!accountId) {
+        return res.status(400).json({ message: "Account Name is required" });
+      }
+      
       // Build insert data array
       const insertData = filesUploaded.map(file => ({
         file_name: file.originalName,
