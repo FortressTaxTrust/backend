@@ -1431,6 +1431,105 @@ router.post("/create/multiple-account", authenticateToken, async (req, res) => {
   }
 });
 
+router.post(
+  "/document/upload",
+  authenticateToken,
+  upload.array("files"),
+  async (req, res) => {
+    try {
+      const { accountId, payload } = req.body;
+      const files = req.files;
+
+      if (!files || !files.length) {
+        return res.status(400).json({ status: "error", message: "Files are required" });
+      }
+
+      if (!accountId) {
+        return res.status(400).json({ status: "error", message: "accountId is required" });
+      }
+
+      if (!payload) {
+        return res.status(400).json({ status: "error", message: "payload is required" });
+      }
+
+      // 🔹 Parse payload (comes as string from multipart)
+      let parsedPayload;
+      try {
+        parsedPayload = JSON.parse(payload);
+      } catch (e) {
+        return res.status(400).json({ status: "error", message: "Invalid payload JSON" });
+      }
+
+      if (!Array.isArray(parsedPayload) || !parsedPayload.length) {
+        return res.status(400).json({ status: "error", message: "payload must be an array" });
+      }
+
+      // 🔹 Folder info from payload
+      const folderInfo = parsedPayload[0]?.selectedFolderPath;
+
+      if (!folderInfo?.folder_id) {
+        return res
+          .status(400)
+          .json({ status: "error", message: "selectedFolderPath.folder_id missing" });
+      }
+
+      const parentId = folderInfo.folder_id;
+      const uploadedFiles = [];
+
+      // 🔹 Upload each file
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const meta = parsedPayload[i] || {};
+
+        try {
+          const uploadRes = await uploadFile(
+            parentId,
+            file.buffer,
+            file.originalname,
+            "true"
+          );
+
+          uploadedFiles.push({
+            fileName: file.originalname,
+            fileType: file.mimetype,
+            folderId: parentId,
+            documentType: meta.documentType || null,
+            analysis: meta.analysis || null,
+            uploadStatus: "success",
+            details: uploadRes?.data || {},
+          });
+
+          console.log(`✅ Uploaded: ${file.originalname}`);
+        } catch (err) {
+          console.error(`❌ Upload error for ${file.originalname}:`, err.message);
+
+          uploadedFiles.push({
+            fileName: file.originalname,
+            uploadStatus: "error",
+            error: err.message,
+          });
+        }
+      }
+
+      return res.json({
+        status: "success",
+        message: "File upload completed",
+        accountId,
+        folderId: parentId,
+        uploadedFiles,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error("Endpoint error:", err);
+
+      return res.status(500).json({
+        status: "error",
+        message: "Internal server error",
+        error: err.message || err,
+      });
+    }
+  }
+);
 
 router.post("/prospect/upload/files", authenticateToken, upload.array("files"), async (req, res) => {
   try {
