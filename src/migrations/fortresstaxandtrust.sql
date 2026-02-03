@@ -208,3 +208,4 @@ CREATE TABLE payment_methods (
 );
 ALTER TABLE subscription ADD COLUMN benefits TEXT[];
 ALTER TABLE accounts DROP COLUMN IF EXISTS user_id;
+DROP TYPE subscription_status_enum CASCADE;

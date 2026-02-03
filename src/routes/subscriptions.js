@@ -145,7 +145,7 @@ router.post('/square/create-subscription', async (req, res) => {
 				createdSub.id,
 				createdSub.startDate || new Date(),
 				chargedThrough,
-				'active',
+				'created',
 				JSON.stringify(clean),
 				no_expiry || false
 			]
