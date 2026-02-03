@@ -1434,25 +1434,23 @@ router.post("/create/multiple-account", authenticateToken, async (req, res) => {
 router.post(
   "/document/upload",
   authenticateToken,
-  upload.array("files"),
+  upload.array("files"), // accepts multiple files
   async (req, res) => {
     try {
       const { accountId, payload } = req.body;
       const files = req.files;
 
-      if (!files || !files.length) {
+      // 🔹 Validate request
+      if (!files || !files.length)
         return res.status(400).json({ status: "error", message: "Files are required" });
-      }
 
-      if (!accountId) {
+      if (!accountId)
         return res.status(400).json({ status: "error", message: "accountId is required" });
-      }
 
-      if (!payload) {
+      if (!payload)
         return res.status(400).json({ status: "error", message: "payload is required" });
-      }
 
-      // 🔹 Parse payload (comes as string from multipart)
+      // 🔹 Parse payload JSON
       let parsedPayload;
       try {
         parsedPayload = JSON.parse(payload);
@@ -1460,39 +1458,35 @@ router.post(
         return res.status(400).json({ status: "error", message: "Invalid payload JSON" });
       }
 
-      if (!Array.isArray(parsedPayload) || !parsedPayload.length) {
-        return res.status(400).json({ status: "error", message: "payload must be an array" });
+      if (!Array.isArray(parsedPayload) || !parsedPayload.length)
+        return res.status(400).json({ status: "error", message: "payload must be a non-empty array" });
+
+      // 🔹 Get WorkDrive root folder for account
+      const workdrive = await getWorkDrive(accountId);
+      const rootFolderLink = workdrive[0]?.easyworkdriveforcrm__Workdrive_Folder_ID_EXT;
+      let rootFolderId = null;
+
+      if (typeof rootFolderLink === "string") {
+        rootFolderId = rootFolderLink.includes("/") ? rootFolderLink.split("/").pop() : rootFolderLink;
       }
 
-      // 🔹 Folder info from payload
-      const folderInfo = parsedPayload[0]?.selectedFolderPath;
+      if (!rootFolderId)
+        return res.status(400).json({ status: "error", message: "No WorkDrive root folder found for this account" });
 
-      if (!folderInfo?.folder_id) {
-        return res
-          .status(400)
-          .json({ status: "error", message: "selectedFolderPath.folder_id missing" });
-      }
-
-      const parentId = folderInfo.folder_id;
       const uploadedFiles = [];
 
       // 🔹 Upload each file
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const meta = parsedPayload[i] || {};
-
+        const folderId = meta.selectedFolderPath.folder_id || rootFolderId;
         try {
-          const uploadRes = await uploadFile(
-            parentId,
-            file.buffer,
-            file.originalname,
-            "true"
-          );
+          const uploadRes = await uploadFile(folderId, file.buffer, file.originalname, "true");
 
           uploadedFiles.push({
             fileName: file.originalname,
             fileType: file.mimetype,
-            folderId: parentId,
+            folderId,
             documentType: meta.documentType || null,
             analysis: meta.analysis || null,
             uploadStatus: "success",
@@ -1501,7 +1495,7 @@ router.post(
 
           console.log(`✅ Uploaded: ${file.originalname}`);
         } catch (err) {
-          console.error(`❌ Upload error for ${file.originalname}:`, err.message);
+          console.error(`❌ Upload error for ${file.originalname}:`, err);
 
           uploadedFiles.push({
             fileName: file.originalname,
@@ -1515,7 +1509,7 @@ router.post(
         status: "success",
         message: "File upload completed",
         accountId,
-        folderId: parentId,
+        folderId: rootFolderId,
         uploadedFiles,
         timestamp: new Date().toISOString(),
       });
