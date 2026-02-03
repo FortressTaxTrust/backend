@@ -110,8 +110,11 @@ router.post('/square/create-subscription', async (req, res) => {
             idempotencyKey: uuidv4(), // Idempotency key for safe retries
             locationId: LOCATION_ID, // Location ID from environment variable
             customerId : sqCustId, // Customer ID for the subscription
-            sourceId: card_id, // Payment source ID from environment variable
+            // sourceId: card_id, // Payment source ID from environment variable
+			 cardId: card_id,       
             planVariationId:  tier.square_plan_id, // ID of the plan variation
+			startDate: new Date().toISOString().split('T')[0], // today
+			timezone: 'UTC',
             phases: [{ // Phase details of the subscription
                 ordinal: BigInt(0),
                 orderTemplateId: orderId
