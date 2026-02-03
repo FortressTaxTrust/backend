@@ -380,16 +380,28 @@ router.post('/signup', async (req, res) => {
     const r = await cognitoClient.send(new SignUpCommand(params));
 
     if (!existingUser || existingUser.length == 0) {
-      const userType = await PgHelper.select("user_type" , { type : "prospect"})
-      await PgHelper.insert("users", {
-        email,
-        first_name: firstName,
-        last_name: lastName,
-        cognito_id: r.UserSub,
-        user_type_id: userType?.id,
-        confirmation_status : "not-confirmed",
-        enabled: true,
-      });
+      const userType = await PgHelper.select("user_type", { type: "prospect" });
+      await PgHelper.query(
+        `
+        INSERT INTO users (email, first_name, last_name, cognito_id, user_type_id, confirmation_status, enabled)
+        VALUES ($1,$2,$3,$4,$5,'not-confirmed',TRUE)
+        ON CONFLICT (email)
+        DO UPDATE SET
+          first_name = EXCLUDED.first_name,
+          last_name = EXCLUDED.last_name,
+          cognito_id = EXCLUDED.cognito_id,
+          user_type_id = EXCLUDED.user_type_id,
+          confirmation_status = EXCLUDED.confirmation_status,
+          enabled = TRUE
+        `,
+        [
+          email,
+          firstName,
+          lastName,
+          r.UserSub,
+          userType?.id
+        ]
+      );
     }
     return res.json({
       status: 'success',
