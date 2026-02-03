@@ -22,13 +22,7 @@ router.get('/profile', authenticateToken, async (req, res) => {
         `SELECT 
            u.*, 
            us.id as user_subscription_id, us.status as subscription_status, us.start_date, us.end_date,
-           s.name as plan_name, s.price as plan_price
-         FROM users u
-         LEFT JOIN user_subscription us ON us.user_id = u.id AND us.status = 'active'
-         LEFT JOIN subscription s ON us.subscription_id = s.id
-         WHERE u.cognito_id = $1
-         ORDER BY us.created_at DESC
-         LIMIT 1`,
+           s.name as plan_name, s.price as plan_price FROM users u LEFT JOIN user_subscription us ON us.user_id = u.id AND us.status = 'created' AND us.enabled = TRUE LEFT JOIN subscription s ON us.subscription_id = s.id WHERE u.cognito_id = $1 ORDER BY us.created_at DESC LIMIT 1`,
         [cognitoId]
       );
     }

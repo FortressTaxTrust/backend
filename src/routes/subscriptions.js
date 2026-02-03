@@ -134,22 +134,16 @@ router.post('/square/create-subscription', async (req, res) => {
 			typeof v === "bigint" ? v.toString() : v
 		));
 		// Step 3: Save subscription in DB
-		const insert = await db.oneOrNone(
-			`INSERT INTO user_subscription
-			 (user_id, subscription_id, square_subscription_id, dtu, enabled, start_date, end_date, status, raw_square_payload, created_at, updated_at, no_expiry)
-			 VALUES ($1,$2,$3, now(), TRUE, $4, $5, $6, $7, now(), now(), $8)
-			 RETURNING *`,
-			[
-				user_id,
-				subscription_id,
-				createdSub.id,
-				createdSub.startDate || new Date(),
-				chargedThrough,
-				'created',
-				JSON.stringify(clean),
-				no_expiry || false
-			]
-		);
+		const inserted = await db.tx(async t => {
+			// 1. Disable any existing active subscription for this user
+			await t.none(`UPDATE user_subscription SET enabled = FALSE, status = 'inactive', updated_at = now() WHERE user_id = $1 AND enabled = TRUE`,[user_id]);
+			// 2. Insert the new subscription
+			return  await t.one(
+				`INSERT INTO user_subscription (user_id, subscription_id, square_subscription_id, dtu, enabled, start_date, end_date, status, raw_square_payload, created_at, updated_at, no_expiry) VALUES ($1,$2,$3, now(), TRUE, $4, $5, $6, $7, now(), now(), $8) RETURNING *`,
+				[ user_id, subscription_id, createdSub.id, createdSub.startDate || new Date(), chargedThrough, 'created', JSON.stringify(clean), no_expiry || false]
+			);
+		});
+
 
 		const userEmailData = {
 				to: user.email,
@@ -187,7 +181,7 @@ router.post('/square/create-subscription', async (req, res) => {
 				</div>`
 			  };
 			await sendMail(userEmailData);
-		return res.json({ ok: true, subscription: insert });
+		return res.json({ ok: true, subscription: inserted });
 	} catch (err) {
 		console.error('create-subscription error', err);
 		res.status(500).json({ status: "error", message: err.message || 'server error' });
@@ -271,7 +265,7 @@ router.post('/webhook', async (req, res) => {
 	console.log("signature" , signature)
 	console.log("SIGNATURE_KEY" , SIGNATURE_KEY)
 	console.log("NOTIFICATION_URL" , NOTIFICATION_URL)
-    if (!rawBodyBuffer) return res.status(400).send('no body');
+    // if (!rawBodyBuffer) return res.status(400).send('no body');
 
     const rawBody = rawBodyBuffer.toString('utf8');
     if (!SIGNATURE_KEY || !NOTIFICATION_URL) return res.status(500).send('server misconfigured');
@@ -280,45 +274,54 @@ router.post('/webhook', async (req, res) => {
 	console.log("valid" , valid)
     // if (!valid) return res.status(403).send('invalid signature');
 
-    const event = JSON.parse(rawBody);
+    const event = rawBodyBuffer;
     const eventType = event.type || event.event_type || null;
 
     await db.none(`INSERT INTO webhook_events (event_type, square_entity_id, payload) VALUES ($1,$2,$3)`, [eventType, event.data?.id || null, JSON.stringify(event)]);
 
     switch (eventType) {
-      case 'subscription.created':
-      case 'subscription.updated':
-      case 'subscription.canceled':
-      case 'subscription.paused':
-      case 'subscription.resumed': {
-        const sub = event.data?.object?.subscription || event.data?.object;
-        if (sub?.id) {
-          const status = (sub.status || '').toLowerCase();
-          const chargedThrough = sub.chargedThroughDate ? new Date(sub.chargedThroughDate) : null;
-          await db.none(`UPDATE user_subscription SET status=$1, end_date=COALESCE($2,end_date), raw_square_payload=$3, updated_at=now() WHERE square_subscription_id=$4`, [status, chargedThrough, JSON.stringify(sub), sub.id]);
-        }
-        break;
-      }
+		case 'subscription.created':
+		case 'subscription.updated':
+		case 'subscription.canceled':
+		case 'subscription.paused':
+		case 'subscription.resumed': {
+			const sub = event.data?.object?.subscription || event.data?.object;
+			if (sub?.id) {
+			const status = (sub.status || '').toLowerCase();
+			const chargedThrough = sub.chargedThroughDate ? new Date(sub.chargedThroughDate) : null;
+			await db.none(`UPDATE user_subscription SET status=$1, end_date=COALESCE($2,end_date), raw_square_payload=$3, updated_at=now() WHERE square_subscription_id=$4`, [status, chargedThrough, JSON.stringify(sub), sub.id]);
+			}
+			break;
+		}
 
-      case 'payment.created':
-      case 'payment.updated': {
-        const payment = event.data?.object?.payment || event.data?.object;
-        if (payment?.id) {
-          const status = (payment.status || '').toLowerCase();
-          const amount = payment.amountMoney?.amount ? payment.amountMoney.amount/100 : null;
-          const currency = payment.amountMoney?.currency || null;
-          const customerId = payment.customerId || null;
-          const mapRes = customerId ? await db.oneOrNone(`SELECT user_id FROM square_customers WHERE square_customer_id=$1 LIMIT 1`, [customerId]) : null;
-          const userId = mapRes?.user_id || null;
+      	case 'payment.created':
+		case 'payment.updated': {
+			const payment = event.data?.object?.payment || event.data?.object;
+			if (!payment?.id) break;
 
-          await db.none(`INSERT INTO payments (user_id,square_payment_id,amount,currency,status,raw_payload,created_at) VALUES ($1,$2,$3,$4,$5,$6,now()) ON CONFLICT (square_payment_id) DO UPDATE SET status=EXCLUDED.status, raw_payload=EXCLUDED.raw_payload`, [userId, payment.id, amount, currency, status, JSON.stringify(payment)]);
+			const status = (payment.status || '').toLowerCase();
+			const amount = payment.amount_money?.amount ? payment.amount_money.amount / 100 : null;
+			const currency = payment.amount_money?.currency || null;
+			const customerId = payment.customer_id || null;
 
-          if (payment.subscriptionId) await db.none(`UPDATE user_subscription SET status=$1,last_payment_status=$2,last_payment_at=now(),updated_at=now() WHERE square_subscription_id=$3`, [status==='completed'? 'created':status, status, payment.subscriptionId]);
+			const mapRes = customerId ? await db.oneOrNone(`SELECT user_id FROM square_customers WHERE square_customer_id=$1 LIMIT 1`, [customerId]) : null;
+			const userId = mapRes?.user_id || null;
 
-          if ((status==='failed'|| status==='canceled') && userId) await db.none(`UPDATE user_subscription SET status='paused', last_payment_status=$1, updated_at=now() WHERE user_id=$2`, [status, userId]);
-        }
-        break;
-      }
+			await db.none(`INSERT INTO payments (user_id,square_payment_id,amount,currency,status,raw_payload,created_at) VALUES ($1,$2,$3,$4,$5,$6,now()) ON CONFLICT (square_payment_id) DO UPDATE SET status=EXCLUDED.status, raw_payload=EXCLUDED.raw_payload`, [userId, payment.id, amount, currency, status, JSON.stringify(payment)]);
+
+			if (status === 'completed' && userId){
+				await db.none(`UPDATE user_subscription us SET status='created', last_payment_status=$1, last_payment_at=now(), end_date=COALESCE(us.end_date, now()) + (s.duration_days || ' days')::interval, updated_at=now() FROM subscription s WHERE us.subscription_id = s.id AND us.user_id=$2 AND us.enabled=TRUE`, [status, userId]);
+				await db.none (`UPDATE users SET paid_status = TRUE WHERE id = $1`, [userId])
+			}
+			if ((status === 'failed' || status === 'canceled') && userId){
+				await db.none(`UPDATE user_subscription SET status='paused', last_payment_status=$1, updated_at=now() WHERE user_id=$2 AND enabled=TRUE`, [status, userId]);
+				await db.none (`UPDATE users SET paid_status = FALSE WHERE id = $1`, [userId])
+
+			}
+				
+			break;
+		}
+
     }
 
     res.status(200).send('OK');
