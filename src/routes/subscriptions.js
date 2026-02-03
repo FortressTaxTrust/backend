@@ -265,6 +265,10 @@ router.post('/webhook', async (req, res) => {
   try {
     const signature = req.headers['x-square-hmacsha256-signature'] || req.headers['X-Square-HmacSha256-Signature'];
     const rawBodyBuffer = req.body;
+	console.log("rawBodyBuffer" , rawBodyBuffer)
+	console.log("signature" , signature)
+	console.log("SIGNATURE_KEY" , SIGNATURE_KEY)
+	console.log("NOTIFICATION_URL" , NOTIFICATION_URL)
     if (!rawBodyBuffer) return res.status(400).send('no body');
 
     const rawBody = rawBodyBuffer.toString('utf8');
