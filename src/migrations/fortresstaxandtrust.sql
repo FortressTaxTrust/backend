@@ -1,6 +1,5 @@
 CREATE TYPE relationship_enum AS ENUM ('spouse', 'child', 'dependent');
 CREATE TYPE user_type_enum AS ENUM ('client', 'prospect');
-CREATE TYPE subscription_status_enum AS ENUM ('active', 'canceled', 'paused', 'expired');
 CREATE TYPE case_study_status_enum AS ENUM ('draft', 'completed');
 
 CREATE TABLE user_type (
@@ -209,3 +208,4 @@ CREATE TABLE payment_methods (
 ALTER TABLE subscription ADD COLUMN benefits TEXT[];
 ALTER TABLE accounts DROP COLUMN IF EXISTS user_id;
 DROP TYPE subscription_status_enum CASCADE;
+ALTER TABLE user_subscription ADD COLUMN status text;
