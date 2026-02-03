@@ -378,31 +378,31 @@ router.post('/signup', async (req, res) => {
     if (secretHash) params.SecretHash = secretHash;
 
     const r = await cognitoClient.send(new SignUpCommand(params));
+    const userType = await PgHelper.select("user_type", { type: "prospect" });
 
-    if (!existingUser || existingUser.length == 0) {
-      const userType = await PgHelper.select("user_type", { type: "prospect" });
-      await PgHelper.query(
-        `
-        INSERT INTO users (email, first_name, last_name, cognito_id, user_type_id, confirmation_status, enabled)
-        VALUES ($1,$2,$3,$4,$5,'not-confirmed',TRUE)
-        ON CONFLICT (email)
-        DO UPDATE SET
-          first_name = EXCLUDED.first_name,
-          last_name = EXCLUDED.last_name,
-          cognito_id = EXCLUDED.cognito_id,
-          user_type_id = EXCLUDED.user_type_id,
-          confirmation_status = EXCLUDED.confirmation_status,
-          enabled = TRUE
-        `,
-        [
-          email,
-          firstName,
-          lastName,
-          r.UserSub,
-          userType?.id
-        ]
+    if (!existingUser || existingUser.length === 0) {
+      await PgHelper.insert("users", {
+        email,
+        first_name: firstName,
+        last_name: lastName,
+        cognito_id: r.UserSub,
+        user_type_id: userType?.id,
+        confirmation_status: "not-confirmed",
+        enabled: true,
+      });
+    } else {
+      await PgHelper.update("users", 
+        {
+          first_name: firstName,
+          last_name: lastName,
+          cognito_id: r.UserSub,
+          user_type_id: userType?.id,
+          enabled: true,
+        },
+        { email }
       );
     }
+
     return res.json({
       status: 'success',
       message: 'User registered successfully. Please check your email for verification code.',
