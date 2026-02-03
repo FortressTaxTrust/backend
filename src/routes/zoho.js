@@ -1479,7 +1479,7 @@ router.post(
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const meta = parsedPayload[i] || {};
-        const folderId = meta.selectedFolderPath.folder_id || rootFolderId;
+        const folderId = meta?.selectedFolderPath?.folder_id || rootFolderId;
         try {
           const uploadRes = await uploadFile(folderId, file.buffer, file.originalname, "true");
 
